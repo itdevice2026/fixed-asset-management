@@ -108,13 +108,27 @@ label:first-child{margin-top:0}
 .tabs2 button.on{background:var(--btn-bg);color:var(--btn-ink);border-color:transparent;font-weight:600}
 .scroll{overflow-x:auto}
 .right{text-align:right}
+.userbadge{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.userbadge .who{font-weight:600;color:var(--ink-1)}
+.rolechip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--ring);color:var(--ink-2)}
+.pill.pending{color:var(--ink-2)} .pill.approved{color:var(--good-text)} .pill.rejected{color:var(--critical)} .pill.converted{color:var(--accent)}
+.auth{position:fixed;inset:0;background:var(--page);display:none;align-items:center;justify-content:center;z-index:200;padding:24px}
+.auth.on{display:flex}
+.authcard{background:var(--surface-1);border:1px solid var(--grid);border-radius:16px;padding:28px;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.08)}
+.authcard h1{font-size:20px;margin:0 0 2px}
+.authcard .sub{margin:0 0 20px}
+.authcard .err{color:var(--critical);font-size:12.5px;margin-top:10px;min-height:16px}
+.authcard button.btn{width:100%;margin-top:16px;padding:11px}
+.brandmark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;margin-bottom:14px}
 </style>
 </head>
 <body>
-<header>
+<div class="auth" id="authscreen"></div>
+<header id="topbar" style="display:none">
   <div class="hrow">
     <div class="brand">Fixed Assets<small>All Company</small></div>
     <nav id="nav"></nav>
+    <div class="userbadge" id="userbadge"></div>
     <button class="mini" id="themeBtn" title="Toggle theme">◐</button>
   </div>
 </header>
@@ -156,6 +170,7 @@ ${b}`}var S=class extends Error{constructor({message:t,code:e,cause:r,name:s}){s
 /* ================= CONFIG ================= */
 const SUPABASE_URL = "https://emkcwukiqxnvcbhkjiqz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_u_qnmEI8oHI9Z_A0-Hht3Q_Yvaa7Ork";
+const ADMIN_FN = SUPABASE_URL + "/functions/v1/fam-admin";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ================= HELPERS ================= */
@@ -174,8 +189,7 @@ const pill = s => '<span class="pill ' + h(s) + '">' + h((s||"").replace(/_/g," 
 let toastTimer;
 function toast(msg, bad) {
   const t = $("#toast");
-  t.textContent = msg;
-  t.style.display = "block";
+  t.textContent = msg; t.style.display = "block";
   t.style.background = bad ? "var(--critical)" : "var(--btn-bg)";
   t.style.color = bad ? "#fff" : "var(--btn-ink)";
   clearTimeout(toastTimer);
@@ -185,7 +199,7 @@ function err(e) { console.error(e); toast((e && (e.message || e.details)) || "So
 
 function openModal(html) { $("#modal").innerHTML = html; $("#overlay").classList.add("on"); }
 function closeModal() { $("#overlay").classList.remove("on"); $("#modal").innerHTML = ""; }
-$("#overlay") && document.addEventListener("click", e => { if (e.target === $("#overlay")) closeModal(); });
+document.addEventListener("click", e => { if (e.target === $("#overlay")) closeModal(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 const mhead = t => '<div class="mhead"><h3>' + h(t) + '</h3><button class="x" onclick="closeModal()">&times;</button></div>';
 
@@ -197,9 +211,7 @@ function opts(list, sel, blank, key, lab) {
 }
 function refName(list, id, lab) { const r = (list||[]).find(x => String(x.id) === String(id)); return r ? r[lab || "name"] : "—"; }
 const val = id => { const e = $("#" + id); return e ? e.value.trim() : ""; };
-const num = id => { const v = val(id); return v === "" ? null : Number(v); };
 
-/* months fully elapsed between two dates (matches Postgres age()) */
 function monthsFull(from, to) {
   if (!from || !to) return 0;
   const a = new Date(from), b = new Date(to);
@@ -208,7 +220,6 @@ function monthsFull(from, to) {
   if (b.getDate() < a.getDate()) m -= 1;
   return Math.max(0, m);
 }
-/* accumulated depreciation of a register row as of a date (straight-line) */
 function depAt(r, asof) {
   const start = r.dep_start || r.depreciation_start || r.acquisition_date;
   let cut = asof;
@@ -216,7 +227,6 @@ function depAt(r, asof) {
   const m = Math.min(r.useful_life_months, monthsFull(start, cut));
   return Math.round((r.acquisition_cost - r.salvage_value) * m / r.useful_life_months * 100) / 100;
 }
-
 function downloadCSV(name, cols, rows) {
   const esc = v => { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const csv = [cols.map(c => esc(c.label)).join(",")]
@@ -224,12 +234,26 @@ function downloadCSV(name, cols, rows) {
     .join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["﻿" + csv], {type: "text/csv"}));
-  a.download = name;
-  a.click();
+  a.download = name; a.click();
 }
 
+/* ================= PERMISSIONS ================= */
+const RANK = { viewer:1, editor:2, preparer:3, approver:4, admin:5 };
+function myrank() { return (S.me && RANK[S.me.role]) || 0; }
+const P = { view:()=>myrank()>=1, ref:()=>myrank()>=2, prepare:()=>myrank()>=3, approve:()=>myrank()>=4, admin:()=>myrank()>=5 };
+function isAdmin() { return S.me && S.me.role === "admin"; }
+/* company field: admin picks; scoped user is fixed to their company */
+function companyField(id, selected) {
+  if (isAdmin()) return '<select id="' + id + '">' + opts(S.refs.companies, selected, "Select company…") + '</select>';
+  const c = (S.refs.companies || [])[0];
+  return '<input value="' + h(c ? c.name : "(no company assigned)") + '" disabled>' +
+         '<input type="hidden" id="' + id + '" value="' + (c ? c.id : "") + '">';
+}
+function defaultCompany() { return isAdmin() ? "" : ((S.refs.companies || [])[0] || {}).id || ""; }
+
 /* ================= STATE ================= */
-const S = { refs: {}, view: "dashboard", reportTab: "register", setupTab: "companies", assetFilter: {q:"", status:"", cat:"", co:""} };
+const S = { me: null, refs: {}, view: "dashboard", reportTab: "register", setupTab: "companies",
+  assetFilter: {q:"", status:"", cat:"", co:""}, dashCompany: "" };
 
 async function loadRefs() {
   const [su, ca, de, lo, em, cm] = await Promise.all([
@@ -249,67 +273,240 @@ async function fetchRegister() {
   return data;
 }
 
+/* ================= AUTH ================= */
+function showAuth(inner) { $("#authscreen").innerHTML = inner; $("#authscreen").classList.add("on"); $("#topbar").style.display = "none"; $("#main").innerHTML = ""; }
+function hideAuth() { $("#authscreen").classList.remove("on"); $("#authscreen").innerHTML = ""; $("#topbar").style.display = ""; }
+function loginScreen(msg) {
+  showAuth('<div class="authcard"><div class="brandmark">FA</div><h1>All Company Fixed Assets</h1><p class="sub">Sign in to continue</p>' +
+    '<label>Email</label><input id="li_email" type="email" autocomplete="username">' +
+    '<label>Password</label><input id="li_pw" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doLogin()">' +
+    '<div class="err" id="li_err">' + (msg ? h(msg) : "") + '</div>' +
+    '<button class="btn" onclick="doLogin()">Sign in</button></div>');
+  setTimeout(() => { const e = $("#li_email"); if (e) e.focus(); }, 60);
+}
+async function doLogin() {
+  const email = val("li_email"), pw = ($("#li_pw") || {}).value || "";
+  const box = $("#li_err"); if (box) box.textContent = "";
+  if (!email || !pw) { if (box) box.textContent = "Enter your email and password."; return; }
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error) { if (box) box.textContent = error.message; return; }
+  await loadMe();
+}
+async function doLogout() { try { await sb.auth.signOut(); } catch(e){} S.me = null; location.reload(); }
+function changePwForm() {
+  openModal(mhead("Change password") +
+    '<label>New password</label><input type="password" id="cp_pw">' +
+    '<label>Confirm new password</label><input type="password" id="cp_pw2">' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="changePw()">Update</button></div>');
+}
+async function changePw() {
+  const a = val("cp_pw"), b = val("cp_pw2");
+  if (a.length < 6) return toast("Use at least 6 characters", true);
+  if (a !== b) return toast("Passwords don't match", true);
+  const { error } = await sb.auth.updateUser({ password: a });
+  if (error) return err(error);
+  closeModal(); toast("Password updated");
+}
+async function loadMe() {
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) { loginScreen(); return; }
+    const { data: prof, error } = await sb.from("fam_profiles").select("*, fam_companies(name)").eq("id", user.id).maybeSingle();
+    if (error) throw error;
+    if (!prof || !prof.active) {
+      showAuth('<div class="authcard"><div class="brandmark">FA</div><h1>No access yet</h1>' +
+        '<p class="sub">Your account (' + h(user.email) + ') is not set up' + (prof && !prof.active ? " or has been deactivated" : "") +
+        '. Please ask an administrator to grant you a role.</p><button class="btn" onclick="doLogout()">Sign out</button></div>');
+      return;
+    }
+    S.me = { id: prof.id, email: user.email, full_name: prof.full_name, role: prof.role,
+             company_id: prof.company_id, company_name: prof.fam_companies ? prof.fam_companies.name : null };
+    hideAuth();
+    await loadRefs();
+    renderUserBadge(); renderNav(); go("dashboard");
+  } catch (e) { err(e); loginScreen("Could not load your profile — please try again."); }
+}
+function renderUserBadge() {
+  $("#userbadge").innerHTML =
+    '<span class="who">' + h(S.me.full_name || S.me.email) + '</span>' +
+    '<span class="rolechip">' + h(S.me.role) + '</span>' +
+    (!isAdmin() && S.me.company_name ? '<span>· ' + h(S.me.company_name) + '</span>' : "") +
+    ' <button class="mini" onclick="changePwForm()">Password</button>' +
+    '<button class="mini" onclick="doLogout()">Sign out</button>';
+}
+
 /* ================= NAV ================= */
-const VIEWS = {
-  dashboard: "Dashboard", pos: "Purchase Orders", assets: "Assets",
-  transfers: "Transfers", disposals: "Disposals", reports: "Reports", setup: "Setup"
-};
+const VIEWS = [
+  ["dashboard","Dashboard",()=>true],
+  ["requests","Purchase Requests",()=>true],
+  ["pos","Purchase Orders",()=>true],
+  ["assets","Assets",()=>true],
+  ["transfers","Transfers",()=>true],
+  ["disposals","Disposals",()=>true],
+  ["reports","Reports",()=>true],
+  ["setup","Setup",()=>P.ref()],
+  ["users","Users",()=>P.admin()],
+];
 function renderNav() {
-  $("#nav").innerHTML = Object.keys(VIEWS).map(k =>
-    '<button class="' + (S.view === k ? "on" : "") + '" onclick="go(\'' + k + '\')">' + VIEWS[k] + '</button>').join("");
+  $("#nav").innerHTML = VIEWS.filter(v => v[2]()).map(v =>
+    '<button class="' + (S.view === v[0] ? "on" : "") + '" onclick="go(\'' + v[0] + '\')">' + v[1] + '</button>').join("");
 }
 async function go(v) {
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
-  try { await ({dashboard: vDashboard, pos: vPOs, assets: vAssets, transfers: vTransfers, disposals: vDisposals, reports: vReports, setup: vSetup})[v](); }
-  catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Check your connection and refresh.</div>'; }
+  const fn = { dashboard:vDashboard, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
+    disposals:vDisposals, reports:vReports, setup:vSetup, users:vUsers }[v];
+  try { await fn(); }
+  catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Refresh and try again.</div>'; }
 }
 
 /* ================= DASHBOARD ================= */
 async function vDashboard() {
   let reg = await fetchRegister();
-  const co = S.dashCompany || "";
+  const co = isAdmin() ? (S.dashCompany || "") : "";
   if (co) reg = reg.filter(r => String(r.company_id) === String(co));
   const act = reg.filter(r => r.status !== "disposed");
   const sum = (a, f) => a.reduce((t, r) => t + Number(r[f] || 0), 0);
   const cost = sum(act, "acquisition_cost"), acc = sum(act, "accumulated_depreciation"), nbv = sum(act, "net_book_value");
   const disposed = reg.length - act.length;
 
+  const { count: prPending } = await sb.from("fam_purchase_requests").select("id", {count:"exact", head:true}).eq("status","pending");
+
   const byCat = {};
   act.forEach(r => { const k = r.category_name || "Uncategorized"; byCat[k] = (byCat[k] || 0) + Number(r.net_book_value || 0); });
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
   const mx = Math.max(1, ...cats.map(c => c[1]));
-
-  const { data: pos } = await sb.from("fam_purchase_orders").select("*, fam_suppliers(name), fam_po_items(quantity, unit_cost)").order("created_at", {ascending: false}).limit(5);
-  const recent = reg.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 5);
+  const recent = reg.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 6);
 
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Dashboard</h2><p class="sub" style="margin:0">Fixed asset position as of ' + dstr(today()) + '</p></div><div class="sp"></div>' +
-    '<select style="max-width:230px" onchange="S.dashCompany=this.value;vDashboard()">' + opts(S.refs.companies, co, "All companies") + '</select></div>' +
+    (isAdmin() ? '<select style="max-width:230px" onchange="S.dashCompany=this.value;vDashboard()">' + opts(S.refs.companies, co, "All companies") + '</select>' : '') + '</div>' +
     '<div class="grid tiles">' +
       '<div class="card tile"><div class="lbl">Active assets</div><div class="val">' + act.length + '</div><div class="sub2">' + disposed + ' disposed</div></div>' +
       '<div class="card tile"><div class="lbl">Acquisition cost</div><div class="val">' + fmtC(cost) + '</div><div class="sub2">' + fmt(cost) + '</div></div>' +
-      '<div class="card tile"><div class="lbl">Accumulated depreciation</div><div class="val">' + fmtC(acc) + '</div><div class="sub2">' + fmt(acc) + '</div></div>' +
-      '<div class="card tile"><div class="lbl">Net book value</div><div class="val">' + fmtC(nbv) + '</div><div class="sub2">' + fmt(nbv) + '</div></div>' +
+      '<div class="card tile"><div class="lbl">Net book value</div><div class="val">' + fmtC(nbv) + '</div><div class="sub2">Accum. dep. ' + fmt(acc) + '</div></div>' +
+      '<div class="card tile"><div class="lbl">Pending requests</div><div class="val">' + (prPending || 0) + '</div><div class="sub2">awaiting approval</div></div>' +
     '</div>' +
     '<div class="grid two" style="margin-top:4px">' +
       '<div class="card"><h3>Net book value by category</h3>' +
         (cats.length ? '<div class="chart">' + cats.map(c =>
           '<div class="row"><div class="cl" title="' + h(c[0]) + '">' + h(c[0]) + '</div><div class="tr"><div class="fill" style="width:' + Math.max(1, c[1] / mx * 100) + '%"></div></div><div class="cv">' + fmtC(c[1]) + '</div></div>').join("") + '</div>'
-        : '<div class="empty">No active assets yet. Start by creating a purchase order.</div>') +
-      '</div>' +
-      '<div class="card"><h3>Recent purchase orders</h3>' +
-        ((pos && pos.length) ? '<div class="scroll"><table><thead><tr><th>PO #</th><th>Supplier</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>' +
-          pos.map(p => { const t = (p.fam_po_items || []).reduce((s, i) => s + i.quantity * i.unit_cost, 0);
-            return '<tr class="click" onclick="poDetail(' + p.id + ')"><td>' + h(p.po_number) + '</td><td>' + h(p.fam_suppliers ? p.fam_suppliers.name : "—") + '</td><td class="num">' + fmt(t) + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
-          '</tbody></table></div>' : '<div class="empty">No purchase orders yet.</div>') +
-      '</div>' +
-    '</div>' +
-    '<div class="card"><h3>Recently registered assets</h3>' +
-      (recent.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>PO #</th><th class="num">Cost</th><th class="num">Net book value</th><th>Status</th></tr></thead><tbody>' +
-        recent.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + h(r.po_number || "—") + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
-        '</tbody></table></div>' : '<div class="empty">No assets registered yet.</div>') +
+        : '<div class="empty">No active assets yet.</div>') + '</div>' +
+      '<div class="card"><h3>Recently registered assets</h3>' +
+        (recent.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th class="num">NBV</th><th>Status</th></tr></thead><tbody>' +
+          recent.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+          '</tbody></table></div>' : '<div class="empty">No assets registered yet.</div>') + '</div>' +
     '</div>';
+}
+
+/* ================= PURCHASE REQUESTS ================= */
+let prItemN = 0;
+function prItemRow(it) {
+  it = it || {}; prItemN++;
+  return '<div class="itemrow" id="pri' + prItemN + '">' +
+    '<input placeholder="Item description" class="pri-desc" value="' + h(it.description || "") + '">' +
+    '<select class="pri-cat">' + opts(S.refs.categories, it.category_id, "Category…") + '</select>' +
+    '<input type="number" min="1" class="pri-qty" placeholder="Qty" value="' + (it.quantity || 1) + '">' +
+    '<input type="number" min="0" step="0.01" class="pri-cost" placeholder="Est. unit cost" value="' + (it.estimated_unit_cost != null ? it.estimated_unit_cost : "") + '">' +
+    '<button class="x" title="Remove" onclick="document.getElementById(\'pri' + prItemN + '\').remove()">&times;</button></div>';
+}
+async function vRequests() {
+  const { data: prs, error } = await sb.from("fam_purchase_requests")
+    .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)")
+    .order("request_date", {ascending:false}).order("id", {ascending:false});
+  if (error) throw error;
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Purchase Requests</h2><p class="sub" style="margin:0">Requests are the basis of purchase orders</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="prForm()">+ New request</button>' : '') + '</div>' +
+    '<div class="card">' + (prs.length ?
+      '<div class="scroll"><table><thead><tr><th>PR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
+      prs.map(p => { const items = p.fam_pr_items || [];
+        const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+        const qty = items.reduce((s,i)=>s+i.quantity,0);
+        return '<tr class="click" onclick="prDetail(' + p.id + ')"><td><strong>' + h(p.pr_number || "—") + '</strong></td><td>' + dstr(p.request_date) + '</td><td>' + h(p.fam_companies?p.fam_companies.name:"—") + '</td><td>' + h(p.fam_departments?p.fam_departments.name:"—") + '</td><td>' + h(p.requested_by || "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(tot) + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
+      '</tbody></table></div>' : '<div class="empty">No purchase requests yet.' + (P.prepare() ? ' Click "+ New request" to create one.' : '') + '</div>') + '</div>';
+}
+function prForm() {
+  prItemN = 0;
+  openModal(mhead("New purchase request") +
+    '<div class="frow"><div><label>Company</label>' + companyField("pr_company", defaultCompany()) + '</div>' +
+    '<div><label>Request date</label><input type="date" id="pr_date" value="' + today() + '"></div></div>' +
+    '<div class="frow"><div><label>Requested by</label><input id="pr_by" value="' + h(S.me.full_name || "") + '"></div>' +
+    '<div><label>Department</label><select id="pr_dept">' + opts(S.refs.departments, "", "—") + '</select></div></div>' +
+    '<label>Purpose / justification</label><input id="pr_purpose" placeholder="e.g. replacement laptops for Finance">' +
+    '<label>Requested items</label><div id="prItems">' + prItemRow() + '</div>' +
+    '<button class="mini" onclick="document.getElementById(\'prItems\').insertAdjacentHTML(\'beforeend\', prItemRow())">+ Add line</button>' +
+    '<label>Notes</label><textarea id="pr_notes" rows="2"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave()">Submit request</button></div>');
+}
+async function prSave() {
+  const company_id = val("pr_company");
+  if (!company_id) return toast("Select a company", true);
+  const items = $$("#prItems .itemrow").map(r => ({
+    description: $(".pri-desc", r).value.trim(),
+    category_id: $(".pri-cat", r).value || null,
+    quantity: Number($(".pri-qty", r).value || 1),
+    estimated_unit_cost: Number($(".pri-cost", r).value || 0),
+  })).filter(i => i.description);
+  if (!items.length) return toast("Add at least one item", true);
+  try {
+    const { data: pr, error } = await sb.from("fam_purchase_requests").insert({
+      company_id, request_date: val("pr_date") || today(), requested_by: val("pr_by") || null,
+      department_id: val("pr_dept") || null, purpose: val("pr_purpose") || null, notes: val("pr_notes") || null, status: "pending",
+    }).select().single();
+    if (error) throw error;
+    const { error: e2 } = await sb.from("fam_pr_items").insert(items.map(i => ({ ...i, pr_id: pr.id })));
+    if (e2) throw e2;
+    closeModal(); toast("Request " + (pr.pr_number || "") + " submitted"); vRequests();
+  } catch (e) { err(e); }
+}
+async function prDetail(id) {
+  try {
+    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_companies(name), fam_departments(name), fam_pr_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const items = pr.fam_pr_items || [];
+    const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+    openModal(mhead("Request " + (pr.pr_number || "")) +
+      '<div class="kv"><div class="k">Company</div><div>' + h(pr.fam_companies?pr.fam_companies.name:"—") + '</div>' +
+      '<div class="k">Date</div><div>' + dstr(pr.request_date) + '</div>' +
+      '<div class="k">Requested by</div><div>' + h(pr.requested_by || "—") + '</div>' +
+      '<div class="k">Department</div><div>' + h(pr.fam_departments?pr.fam_departments.name:"—") + '</div>' +
+      '<div class="k">Purpose</div><div>' + h(pr.purpose || "—") + '</div>' +
+      '<div class="k">Status</div><div>' + pill(pr.status) + '</div>' +
+      (pr.notes ? '<div class="k">Notes</div><div>' + h(pr.notes) + '</div>' : "") + '</div>' +
+      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
+      items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
+      '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
+      '<div class="mfoot">' +
+      (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
+      (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
+      '<button class="btn2" onclick="closeModal()">Close</button></div>');
+  } catch (e) { err(e); }
+}
+async function prSetStatus(id, status) {
+  try {
+    const { error } = await sb.from("fam_purchase_requests").update({ status }).eq("id", id);
+    if (error) throw error;
+    toast("Request " + status); prDetail(id); if (S.view === "requests") vRequests();
+  } catch (e) { err(e); }
+}
+async function prConvert(id) {
+  try {
+    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_pr_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const { data: po, error: e1 } = await sb.from("fam_purchase_orders").insert({
+      company_id: pr.company_id, pr_id: pr.id, po_date: today(), status: "ordered",
+      notes: "From request " + (pr.pr_number || ""),
+    }).select().single();
+    if (e1) throw e1;
+    const rows = (pr.fam_pr_items || []).map(i => ({
+      po_id: po.id, description: i.description, category_id: i.category_id, quantity: i.quantity, unit_cost: i.estimated_unit_cost,
+    }));
+    if (rows.length) { const { error: e2 } = await sb.from("fam_po_items").insert(rows); if (e2) throw e2; }
+    const { error: e3 } = await sb.from("fam_purchase_requests").update({ status: "converted" }).eq("id", id);
+    if (e3) throw e3;
+    closeModal(); toast("PO " + (po.po_number || "") + " created from request"); go("pos");
+  } catch (e) { err(e); }
 }
 
 /* ================= PURCHASE ORDERS ================= */
@@ -325,22 +522,20 @@ async function vPOs() {
     (as || []).forEach(a => regByPO[a.po_id] = (regByPO[a.po_id] || 0) + 1);
   }
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">Assets are registered from received PO line items</p></div><div class="sp"></div>' +
-    '<button class="btn" onclick="poForm()">+ New PO</button></div>' +
+    '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">PO numbers auto-generate; assets are registered from received POs</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + '</div>' +
     '<div class="card">' + (pos.length ?
-      '<div class="scroll"><table><thead><tr><th>PO #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Assets registered</th><th>Status</th></tr></thead><tbody>' +
+      '<div class="scroll"><table><thead><tr><th>PO #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
       pos.map(p => { const items = p.fam_po_items || [];
         const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
         const qty = items.reduce((s, i) => s + i.quantity, 0);
-        return '<tr class="click" onclick="poDetail(' + p.id + ')"><td><strong>' + h(p.po_number) + '</strong></td><td>' + dstr(p.po_date) + '</td><td>' + h(p.fam_companies ? p.fam_companies.name : "—") + '</td><td>' + h(p.fam_suppliers ? p.fam_suppliers.name : "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(total) + '</td><td class="num">' + (regByPO[p.id] || 0) + ' / ' + qty + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
+        return '<tr class="click" onclick="poDetail(' + p.id + ')"><td><strong>' + h(p.po_number || "—") + '</strong></td><td>' + dstr(p.po_date) + '</td><td>' + h(p.fam_companies?p.fam_companies.name:"—") + '</td><td>' + h(p.fam_suppliers ? p.fam_suppliers.name : "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(total) + '</td><td class="num">' + (regByPO[p.id] || 0) + ' / ' + qty + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
       '</tbody></table></div>'
-      : '<div class="empty">No purchase orders yet. Click "+ New PO" to create the first one.</div>') + '</div>';
+      : '<div class="empty">No purchase orders yet. Approve a purchase request and convert it, or create one directly.</div>') + '</div>';
 }
-
 let poItemN = 0;
 function poItemRow(it) {
-  it = it || {};
-  poItemN++;
+  it = it || {}; poItemN++;
   return '<div class="itemrow" id="pi' + poItemN + '">' +
     '<input placeholder="Item description" class="pi-desc" value="' + h(it.description || "") + '">' +
     '<select class="pi-cat">' + opts(S.refs.categories, it.category_id, "Category…") + '</select>' +
@@ -349,21 +544,21 @@ function poItemRow(it) {
     '<button class="x" title="Remove" onclick="document.getElementById(\'pi' + poItemN + '\').remove()">&times;</button></div>';
 }
 function poForm() {
+  poItemN = 0;
   openModal(mhead("New purchase order") +
-    '<div class="frow"><div><label>PO number</label><input id="f_po_number" placeholder="e.g. PO-2026-001"></div>' +
+    '<div class="frow"><div><label>Company</label>' + companyField("f_company", defaultCompany()) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
-    '<div class="frow"><div><label>Company</label><select id="f_company">' + opts(S.refs.companies, "", "Select company…") + '</select></div>' +
-    '<div><label>Supplier</label><select id="f_supplier">' + opts(S.refs.suppliers, "", "Select supplier…") + '</select></div></div>' +
-    '<div class="frow"><div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div><div></div></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(S.refs.suppliers, "", "Select supplier…") + '</select></div>' +
+    '<div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div></div>' +
+    '<div class="note">PO number is generated automatically as company code + date + sequence.</div>' +
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
-    '<div class="note">Tip: add suppliers and categories under Setup.</div>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>');
 }
 async function poSave() {
-  const po_number = val("f_po_number");
-  if (!po_number) return toast("PO number is required", true);
+  const company_id = val("f_company");
+  if (!company_id) return toast("Select a company", true);
   const items = $$("#poItems .itemrow").map(r => ({
     description: $(".pi-desc", r).value.trim(),
     category_id: $(".pi-cat", r).value || null,
@@ -373,27 +568,27 @@ async function poSave() {
   if (!items.length) return toast("Add at least one line item", true);
   try {
     const { data: po, error } = await sb.from("fam_purchase_orders").insert({
-      po_number, po_date: val("f_po_date") || today(),
-      company_id: val("f_company") || null,
+      company_id, po_date: val("f_po_date") || today(),
       supplier_id: val("f_supplier") || null, status: val("f_status"), notes: val("f_notes") || null
     }).select().single();
     if (error) throw error;
     const { error: e2 } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: po.id })));
     if (e2) throw e2;
-    closeModal(); toast("PO " + po_number + " saved"); go("pos");
+    closeModal(); toast("PO " + (po.po_number || "") + " saved"); go("pos");
   } catch (e) { err(e); }
 }
 async function poDetail(id) {
   try {
-    const { data: po, error } = await sb.from("fam_purchase_orders").select("*, fam_suppliers(name), fam_companies(name), fam_po_items(*)").eq("id", id).single();
+    const { data: po, error } = await sb.from("fam_purchase_orders").select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(*)").eq("id", id).single();
     if (error) throw error;
     const { data: assets } = await sb.from("fam_assets").select("id, po_item_id").eq("po_id", id);
     const regByItem = {};
     (assets || []).forEach(a => regByItem[a.po_item_id] = (regByItem[a.po_item_id] || 0) + 1);
     const items = po.fam_po_items || [];
     const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
-    openModal(mhead("PO " + po.po_number) +
-      '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies ? po.fam_companies.name : "—") + '</div>' +
+    openModal(mhead("PO " + (po.po_number || "")) +
+      '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies?po.fam_companies.name:"—") + '</div>' +
+      (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + h(po.fam_purchase_requests.pr_number) + '</div>' : "") +
       '<div class="k">Supplier</div><div>' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + '</div>' +
       '<div class="k">Date</div><div>' + dstr(po.po_date) + '</div>' +
       '<div class="k">Status</div><div>' + pill(po.status) + '</div>' +
@@ -402,11 +597,11 @@ async function poDetail(id) {
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
-        '<td class="right">' + (rem > 0 && po.status !== "cancelled" ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
+        '<td class="right">' + (rem > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
-      (po.status !== "received" && po.status !== "cancelled" ? '<button class="btn2" onclick="poStatus(' + po.id + ',\'received\')">Mark received</button>' : "") +
-      (po.status === "draft" || po.status === "ordered" ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
+      (po.status !== "received" && po.status !== "cancelled" && P.approve() ? '<button class="btn2" onclick="poStatus(' + po.id + ',\'received\')">Mark received</button>' : "") +
+      ((po.status === "draft" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>');
   } catch (e) { err(e); }
 }
@@ -424,19 +619,20 @@ async function registerForm(poId, itemId) {
     const { count } = await sb.from("fam_assets").select("id", {count: "exact", head: true}).eq("po_item_id", itemId);
     const rem = item.quantity - (count || 0);
     const cat = (S.refs.categories || []).find(c => c.id === item.category_id);
+    const parent = item.fam_purchase_orders || {};
     openModal(mhead("Register assets — " + item.description) +
       '<div class="frow3">' +
-      '<div><label>Quantity to register</label><input type="number" id="r_qty" min="1" max="' + rem + '" value="' + rem + '"></div>' +
+      '<div><label>Quantity</label><input type="number" id="r_qty" min="1" max="' + rem + '" value="' + rem + '"></div>' +
       '<div><label>Acquisition date</label><input type="date" id="r_date" value="' + today() + '"></div>' +
       '<div><label>Depreciation start</label><input type="date" id="r_dep" value="' + today() + '"></div></div>' +
       '<div class="frow"><div><label>Unit cost</label><input type="number" id="r_cost" step="0.01" value="' + item.unit_cost + '"></div>' +
       '<div><label>Useful life (months)</label><input type="number" id="r_life" value="' + (cat ? cat.useful_life_months : 60) + '"></div></div>' +
-      '<div class="frow"><div><label>Salvage value (each)</label><input type="number" id="r_salvage" step="0.01" value="' + (cat ? Math.round(item.unit_cost * cat.salvage_rate) / 100 * 1 : 0).toFixed(2) + '"></div>' +
+      '<div class="frow"><div><label>Salvage value (each)</label><input type="number" id="r_salvage" step="0.01" value="' + (cat ? (item.unit_cost * cat.salvage_rate / 100) : 0).toFixed(2) + '"></div>' +
       '<div><label>Location</label><select id="r_loc">' + opts(S.refs.locations, "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Department</label><select id="r_dept">' + opts(S.refs.departments, "", "—") + '</select></div>' +
       '<div><label>Custodian</label><select id="r_cust">' + opts(S.refs.employees, "", "—") + '</select></div></div>' +
-      '<div class="note">Each unit becomes one asset with its own auto-generated code (FA-00001…).</div>' +
-      '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (item.fam_purchase_orders ? item.fam_purchase_orders.supplier_id || "null" : "null") + ',' + (item.fam_purchase_orders ? item.fam_purchase_orders.company_id || "null" : "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>');
+      '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…).</div>' +
+      '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>');
   } catch (e) { err(e); }
 }
 async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
@@ -467,12 +663,12 @@ async function vAssets() {
   const f = S.assetFilter;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Assets</h2><p class="sub" style="margin:0">Asset register with live depreciation</p></div><div class="sp"></div>' +
-    '<button class="btn2" onclick="assetForm()">+ Add manually</button></div>' +
-    '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:260px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
-    '<select style="max-width:200px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' +
-    '<select id="af_status" style="max-width:160px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
+    (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + '</div>' +
+    '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:240px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
+    (isAdmin() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
+    '<select style="max-width:150px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
     ["active","under_repair","disposed","lost"].map(s => '<option value="' + s + '"' + (f.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select>' +
-    '<select id="af_cat" style="max-width:200px" onchange="S.assetFilter.cat=this.value;renderAssetTable()">' + opts(S.refs.categories, f.cat, "All categories") + '</select></div>' +
+    '<select style="max-width:190px" onchange="S.assetFilter.cat=this.value;renderAssetTable()">' + opts(S.refs.categories, f.cat, "All categories") + '</select></div>' +
     '<div class="card" id="assetTableWrap"></div>';
   renderAssetTable();
 }
@@ -484,8 +680,8 @@ function renderAssetTable() {
     (!f.co || String(r.company_id) === String(f.co)) &&
     (!f.cat || String(r.category_id) === String(f.cat)));
   $("#assetTableWrap").innerHTML = rows.length ?
-    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Location</th><th>Custodian</th><th>Status</th></tr></thead><tbody>' +
-    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.location_name || "—") + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Custodian</th><th>Status</th></tr></thead><tbody>' +
+    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
     '</tbody></table></div><div class="note">' + rows.length + ' asset(s) · Cost ' + fmt(rows.reduce((s, r) => s + +r.acquisition_cost, 0)) + ' · NBV ' + fmt(rows.reduce((s, r) => s + +r.net_book_value, 0)) + '</div>'
     : '<div class="empty">No assets match.</div>';
 }
@@ -509,24 +705,22 @@ async function assetDetail(id) {
       '<div class="k">Location</div><div>' + h(r.location_name || "—") + '</div>' +
       '<div class="k">Department</div><div>' + h(r.department_name || "—") + '</div>' +
       '<div class="k">Custodian</div><div>' + h(r.custodian_name || "—") + '</div>' +
-      (r.disposal_date ? '<div class="k">Disposed</div><div>' + dstr(r.disposal_date) + ' (' + h(r.disposal_method) + ', proceeds ' + fmt(r.disposal_proceeds) + ')</div>' : "") +
+      (r.disposal_date ? '<div class="k">Disposed</div><div>' + dstr(r.disposal_date) + ' (' + h(r.disposal_method) + ')</div>' : "") +
       (r.notes ? '<div class="k">Notes</div><div>' + h(r.notes) + '</div>' : "") +
       '</div><div class="mfoot">' +
-      (r.status !== "disposed" ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button>' : "") +
-      '<button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button><button class="btn" onclick="closeModal()">Close</button></div>');
+      (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
+      '<button class="btn" onclick="closeModal()">Close</button></div>');
   } catch (e) { err(e); }
 }
 async function assetForm(id) {
+  if (!P.prepare()) return toast("You don't have permission to edit assets", true);
   let a = {};
-  if (id) {
-    const { data, error } = await sb.from("fam_assets").select("*").eq("id", id).single();
-    if (error) return err(error);
-    a = data;
-  }
+  if (id) { const { data, error } = await sb.from("fam_assets").select("*").eq("id", id).single(); if (error) return err(error); a = data; }
   openModal(mhead(id ? "Edit " + (a.asset_code || "asset") : "Add asset manually") +
     '<div class="frow"><div><label>Asset name</label><input id="a_name" value="' + h(a.name || "") + '"></div>' +
-    '<div><label>Company</label><select id="a_company">' + opts(S.refs.companies, a.company_id, "—") + '</select></div></div>' +
-    '<div class="frow"><div><label>Category</label><select id="a_cat" onchange="catDefaults()">' + opts(S.refs.categories, a.category_id, "—") + '</select></div><div></div></div>' +
+    '<div><label>Company</label>' + companyField("a_company", a.company_id != null ? a.company_id : defaultCompany()) + '</div></div>' +
+    '<div class="frow"><div><label>Category</label><select id="a_cat" onchange="catDefaults()">' + opts(S.refs.categories, a.category_id, "—") + '</select></div>' +
+    '<div><label>Status</label><select id="a_status">' + ["active","under_repair","lost"].map(s => '<option value="' + s + '"' + (a.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select></div></div>' +
     '<div class="frow3"><div><label>Acquisition date</label><input type="date" id="a_date" value="' + (a.acquisition_date || today()) + '"></div>' +
     '<div><label>Depreciation start</label><input type="date" id="a_dep" value="' + (a.depreciation_start || a.acquisition_date || today()) + '"></div>' +
     '<div><label>Acquisition cost</label><input type="number" step="0.01" id="a_cost" value="' + (a.acquisition_cost != null ? a.acquisition_cost : "") + '"></div></div>' +
@@ -535,10 +729,9 @@ async function assetForm(id) {
     '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(S.refs.suppliers, a.supplier_id, "—") + '</select></div>' +
-    '<div><label>Status</label><select id="a_status">' + ["active","under_repair","lost"].map(s => '<option value="' + s + '"' + (a.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select></div></div>' +
-    '<div class="frow3"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
-    '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div>' +
     '<div><label>Custodian</label><select id="a_cust">' + opts(S.refs.employees, a.custodian_id, "—") + '</select></div></div>' +
+    '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
+    '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div></div>' +
     '<label>Notes</label><textarea id="a_notes" rows="2">' + h(a.notes || "") + '</textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="assetSave(' + (id || "null") + ')">Save</button></div>');
 }
@@ -561,7 +754,7 @@ async function assetSave(id) {
     notes: val("a_notes") || null,
   };
   if (!row.name) return toast("Asset name is required", true);
-  if (!(row.acquisition_cost >= 0)) return toast("Cost is required", true);
+  if (!row.company_id) return toast("Company is required", true);
   try {
     const q = id ? sb.from("fam_assets").update(row).eq("id", id) : sb.from("fam_assets").insert(row);
     const { error } = await q;
@@ -580,8 +773,8 @@ async function vTransfers() {
   const an = {}; (assets || []).forEach(a => an[a.id] = a.asset_code + " — " + a.name);
   window._activeAssets = (assets || []).filter(a => a.status === "active" || a.status === "under_repair");
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement of assets between locations, departments, and custodians</p></div><div class="sp"></div>' +
-    '<button class="btn" onclick="transferForm()">+ New transfer</button></div>' +
+    '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement between locations, departments, and custodians</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="transferForm()">+ New transfer</button>' : '') + '</div>' +
     '<div class="card">' + ((tr && tr.length) ?
       '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Reason</th></tr></thead><tbody>' +
       tr.map(t => '<tr><td>' + dstr(t.transfer_date) + '</td><td>' + h(an[t.asset_id] || "#" + t.asset_id) + '</td>' +
@@ -592,6 +785,7 @@ async function vTransfers() {
       '</tbody></table></div>' : '<div class="empty">No transfers recorded yet.</div>') + '</div>';
 }
 async function transferForm(assetId) {
+  if (!P.prepare()) return toast("You don't have permission to transfer assets", true);
   let list = window._activeAssets;
   if (!list) {
     const { data } = await sb.from("fam_assets").select("id, asset_code, name, status").in("status", ["active","under_repair"]).order("asset_code");
@@ -637,7 +831,7 @@ async function transferSave() {
   } catch (e) { err(e); }
 }
 
-/* ================= DISPOSALS ================= */
+/* ================= DISPOSALS (with approval) ================= */
 async function vDisposals() {
   const [{ data: dis, error }, { data: assets }] = await Promise.all([
     sb.from("fam_disposals").select("*").order("disposal_date", {ascending: false}),
@@ -646,32 +840,40 @@ async function vDisposals() {
   if (error) throw error;
   const an = {}; (assets || []).forEach(a => an[a.id] = a.asset_code + " — " + a.name);
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Disposals</h2><p class="sub" style="margin:0">Sold, scrapped, donated, or written-off assets</p></div><div class="sp"></div>' +
-    '<button class="btn" onclick="disposeForm()">+ Dispose asset</button></div>' +
+    '<div class="bar"><div><h2>Disposals</h2><p class="sub" style="margin:0">Disposals are prepared, then approved before the asset is retired</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="disposeForm()">+ Prepare disposal</button>' : '') + '</div>' +
     '<div class="card">' + ((dis && dis.length) ?
-      '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Approved by</th></tr></thead><tbody>' +
+      '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Approval</th><th></th></tr></thead><tbody>' +
       dis.map(d => { const gl = Number(d.gain_loss || 0);
-        return '<tr><td>' + dstr(d.disposal_date) + '</td><td>' + h(an[d.asset_id] || "#" + d.asset_id) + '</td><td>' + h(d.method.replace(/_/g," ")) + '</td><td class="num">' + fmt(d.book_value_at_disposal) + '</td><td class="num">' + fmt(d.proceeds) + '</td><td class="num" style="color:' + (gl < 0 ? "var(--critical)" : "var(--good-text)") + '">' + (gl < 0 ? "(" + fmt(-gl) + ")" : fmt(gl)) + '</td><td>' + h(d.approved_by || "—") + '</td></tr>'; }).join("") +
+        return '<tr><td>' + dstr(d.disposal_date) + '</td><td>' + h(an[d.asset_id] || "#" + d.asset_id) + '</td><td>' + h(d.method.replace(/_/g," ")) + '</td><td class="num">' + fmt(d.book_value_at_disposal) + '</td><td class="num">' + fmt(d.proceeds) + '</td><td class="num" style="color:' + (gl < 0 ? "var(--critical)" : "var(--good-text)") + '">' + (gl < 0 ? "(" + fmt(-gl) + ")" : fmt(gl)) + '</td><td>' + pill(d.approval_status) + '</td>' +
+        '<td class="right">' + (d.approval_status === "pending" && P.approve() ? '<button class="btn3" onclick="disposeApprove(' + d.id + ',\'approved\')">Approve</button> <button class="btn3 danger" onclick="disposeApprove(' + d.id + ',\'rejected\')">Reject</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' : '<div class="empty">No disposals recorded.</div>') + '</div>';
 }
 async function disposeForm(assetId) {
+  if (!P.prepare()) return toast("You don't have permission to prepare disposals", true);
   const { data: list } = await sb.from("fam_v_asset_register").select("id, asset_code, name, net_book_value").neq("status", "disposed").order("asset_code");
   if (!list || !list.length) return toast("No active assets to dispose", true);
-  openModal(mhead("Dispose asset") +
+  openModal(mhead("Prepare disposal") +
     '<label>Asset</label><select id="d_asset" onchange="dNBV()">' + opts(list.map(a => ({id: a.id, name: a.asset_code + " — " + a.name})), assetId, "Select asset…") + '</select>' +
     '<div id="d_nbv" class="note"></div>' +
     '<div class="frow3"><div><label>Disposal date</label><input type="date" id="d_date" value="' + today() + '"></div>' +
     '<div><label>Method</label><select id="d_method">' + ["sold","scrapped","donated","traded_in","lost","written_off"].map(m => '<option value="' + m + '">' + m.replace(/_/g," ") + '</option>').join("") + '</select></div>' +
     '<div><label>Proceeds</label><input type="number" step="0.01" id="d_proceeds" value="0"></div></div>' +
-    '<div class="frow"><div><label>Approved by</label><input id="d_appr"></div>' +
+    '<div class="frow"><div><label>Prepared / requested by</label><input id="d_appr" value="' + h(S.me.full_name || "") + '"></div>' +
     '<div><label>Notes</label><input id="d_notes"></div></div>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="disposeSave()">Record disposal</button></div>');
-  window._dList = list;
-  dNBV();
+    '<div class="note">The asset stays active until an Approver approves this disposal.</div>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="disposeSave()">Submit for approval</button></div>');
+  window._dList = list; dNBV();
 }
 function dNBV() {
   const a = (window._dList || []).find(x => String(x.id) === val("d_asset"));
   $("#d_nbv").textContent = a ? "Current net book value: " + fmt(a.net_book_value) : "";
+}
+function depAtDate(r, dateStr) {
+  const start = r.dep_start || r.depreciation_start || r.acquisition_date;
+  const m = Math.min(r.useful_life_months, monthsFull(start, dateStr));
+  const acc = Math.round((r.acquisition_cost - r.salvage_value) * m / r.useful_life_months * 100) / 100;
+  return Math.round((r.acquisition_cost - acc) * 100) / 100;
 }
 async function disposeSave() {
   const assetId = val("d_asset");
@@ -684,30 +886,25 @@ async function disposeSave() {
     const { error: e1 } = await sb.from("fam_disposals").insert({
       asset_id: assetId, disposal_date: val("d_date") || today(), method: val("d_method"),
       proceeds, book_value_at_disposal: bv, gain_loss: Math.round((proceeds - bv) * 100) / 100,
-      approved_by: val("d_appr") || null, notes: val("d_notes") || null,
+      approved_by: val("d_appr") || null, notes: val("d_notes") || null, approval_status: "pending",
     });
     if (e1) throw e1;
-    const { error: e2 } = await sb.from("fam_assets").update({ status: "disposed" }).eq("id", assetId);
-    if (e2) throw e2;
-    closeModal(); toast("Disposal recorded"); go(S.view);
+    closeModal(); toast("Disposal submitted for approval"); go(S.view);
   } catch (e) { err(e); }
 }
-/* NBV as of a date (for disposal) */
-function depAtDate(r, dateStr) {
-  const start = r.dep_start || r.depreciation_start || r.acquisition_date;
-  const m = Math.min(r.useful_life_months, monthsFull(start, dateStr));
-  const acc = Math.round((r.acquisition_cost - r.salvage_value) * m / r.useful_life_months * 100) / 100;
-  return Math.round((r.acquisition_cost - acc) * 100) / 100;
+async function disposeApprove(id, status) {
+  try {
+    const { error } = await sb.from("fam_disposals").update({ approval_status: status }).eq("id", id);
+    if (error) throw error;
+    toast("Disposal " + status); if (S.view === "disposals") vDisposals();
+  } catch (e) { err(e); }
 }
 
 /* ================= REPORTS ================= */
 async function vReports() {
   REG_CACHE = await fetchRegister();
-  $("#main").innerHTML =
-    '<h2>Reports</h2><p class="sub">All figures use straight-line depreciation</p>' +
-    '<div class="tabs2" id="rtabs"></div><div id="rbody"></div>';
-  renderReportTabs();
-  renderReport();
+  $("#main").innerHTML = '<h2>Reports</h2><p class="sub">Straight-line depreciation · scoped to your access</p><div class="tabs2" id="rtabs"></div><div id="rbody"></div>';
+  renderReportTabs(); renderReport();
 }
 const RTABS = { register: "Asset register", lapsing: "Depreciation schedule", com: "By company", cat: "By category", dept: "By department", loc: "By location" };
 function renderReportTabs() {
@@ -719,25 +916,24 @@ function renderReport() {
   if (S.reportTab === "register") {
     const rows = REG_CACHE;
     b.innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">Full asset register</h3><div class="sp"></div><button class="btn2" onclick="expRegister()">Export CSV</button></div>' +
-      (rows.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>PO #</th><th>Acquired</th><th>Dep. start</th><th class="num">Life (mo)</th><th class="num">Cost</th><th class="num">Salvage</th><th class="num">Monthly dep.</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Status</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + h(r.po_number || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td>' + dstr(r.dep_start) + '</td><td class="num">' + r.useful_life_months + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.salvage_value) + '</td><td class="num">' + fmt(r.monthly_depreciation) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+      (rows.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>PO #</th><th>Acquired</th><th class="num">Cost</th><th class="num">Monthly</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Status</th></tr></thead><tbody>' +
+      rows.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + h(r.po_number || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.monthly_depreciation) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
       '</tbody></table></div>' : '<div class="empty">No assets.</div>') + '</div>';
   } else if (S.reportTab === "lapsing") {
     const y = S.lapsingYear || new Date().getFullYear();
     S.lapsingYear = y;
     const rows = REG_CACHE.filter(r => new Date(r.dep_start || r.acquisition_date) <= new Date(y + "-12-31"));
     const calc = rows.map(r => {
-      const start = depAt(r, (y - 1) + "-12-31");
-      const end = depAt(r, y + "-12-31");
+      const start = depAt(r, (y - 1) + "-12-31"), end = depAt(r, y + "-12-31");
       return { ...r, y_start: start, y_dep: Math.round((end - start) * 100) / 100, y_end: end, y_nbv: Math.round((r.acquisition_cost - end) * 100) / 100 };
     });
     const tot = f => calc.reduce((s, r) => s + r[f], 0);
     b.innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">Depreciation (lapsing) schedule</h3>' +
       '<input type="number" style="max-width:110px" value="' + y + '" onchange="S.lapsingYear=Number(this.value);renderReport()">' +
       '<div class="sp"></div><button class="btn2" onclick="expLapsing()">Export CSV</button></div>' +
-      (calc.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Dep. start</th><th class="num">Cost</th><th class="num">Accum. dep. @ Jan 1, ' + y + '</th><th class="num">Depreciation ' + y + '</th><th class="num">Accum. dep. @ Dec 31, ' + y + '</th><th class="num">NBV @ Dec 31, ' + y + '</th></tr></thead><tbody>' +
-      calc.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + ' <span style="color:var(--ink-3)">· ' + h(r.company_name || "—") + '</span></td><td>' + dstr(r.dep_start) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.y_start) + '</td><td class="num">' + fmt(r.y_dep) + '</td><td class="num">' + fmt(r.y_end) + '</td><td class="num">' + fmt(r.y_nbv) + '</td></tr>').join("") +
-      '</tbody><tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot("acquisition_cost")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_start")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_dep")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_end")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_nbv")) + '</strong></td></tr></tfoot></table></div>' : '<div class="empty">No assets depreciating in ' + y + '.</div>') + '</div>';
+      (calc.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th class="num">Cost</th><th class="num">Accum @ Jan 1</th><th class="num">Dep ' + y + '</th><th class="num">Accum @ Dec 31</th><th class="num">NBV @ Dec 31</th></tr></thead><tbody>' +
+      calc.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + ' <span style="color:var(--ink-3)">· ' + h(r.company_name || "—") + '</span></td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.y_start) + '</td><td class="num">' + fmt(r.y_dep) + '</td><td class="num">' + fmt(r.y_end) + '</td><td class="num">' + fmt(r.y_nbv) + '</td></tr>').join("") +
+      '</tbody><tfoot><tr><td colspan="2"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot("acquisition_cost")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_start")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_dep")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_end")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_nbv")) + '</strong></td></tr></tfoot></table></div>' : '<div class="empty">No assets depreciating in ' + y + '.</div>') + '</div>';
     window._lapsing = calc;
   } else {
     const keyMap = { com: "company_name", cat: "category_name", dept: "department_name", loc: "location_name" };
@@ -759,8 +955,7 @@ function renderReport() {
 function expRegister() {
   downloadCSV("asset_register_" + today() + ".csv", [
     {label:"Asset Code",get:"asset_code"},{label:"Name",get:"name"},{label:"Company",get:"company_name"},{label:"Category",get:"category_name"},{label:"PO Number",get:"po_number"},
-    {label:"Supplier",get:"supplier_name"},{label:"Serial",get:"serial_number"},{label:"Model",get:"model"},
-    {label:"Acquisition Date",get:"acquisition_date"},{label:"Depreciation Start",get:"dep_start"},{label:"Useful Life (months)",get:"useful_life_months"},
+    {label:"Supplier",get:"supplier_name"},{label:"Serial",get:"serial_number"},{label:"Acquisition Date",get:"acquisition_date"},{label:"Useful Life (months)",get:"useful_life_months"},
     {label:"Cost",get:"acquisition_cost"},{label:"Salvage",get:"salvage_value"},{label:"Monthly Depreciation",get:"monthly_depreciation"},
     {label:"Accumulated Depreciation",get:"accumulated_depreciation"},{label:"Net Book Value",get:"net_book_value"},
     {label:"Location",get:"location_name"},{label:"Department",get:"department_name"},{label:"Custodian",get:"custodian_name"},{label:"Status",get:"status"},
@@ -769,7 +964,7 @@ function expRegister() {
 function expLapsing() {
   const y = S.lapsingYear;
   downloadCSV("depreciation_schedule_" + y + ".csv", [
-    {label:"Asset Code",get:"asset_code"},{label:"Name",get:"name"},{label:"Company",get:"company_name"},{label:"Depreciation Start",get:"dep_start"},{label:"Cost",get:"acquisition_cost"},
+    {label:"Asset Code",get:"asset_code"},{label:"Name",get:"name"},{label:"Company",get:"company_name"},{label:"Cost",get:"acquisition_cost"},
     {label:"Accum Dep Start of " + y,get:"y_start"},{label:"Depreciation " + y,get:"y_dep"},{label:"Accum Dep End of " + y,get:"y_end"},{label:"NBV End of " + y,get:"y_nbv"},
   ], window._lapsing || []);
 }
@@ -781,8 +976,8 @@ function expSummary(label) {
 
 /* ================= SETUP ================= */
 const SETUP = {
-  companies: { title: "Companies", table: "fam_companies", fields: [
-    {k:"name",l:"Company name",req:1},{k:"code",l:"Code"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
+  companies: { title: "Companies", table: "fam_companies", adminOnly: true, fields: [
+    {k:"name",l:"Company name",req:1},{k:"code",l:"Code (PO/PR prefix)"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   suppliers: { title: "Suppliers", table: "fam_suppliers", fields: [
     {k:"name",l:"Name",req:1},{k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   categories: { title: "Asset categories", table: "fam_categories", fields: [
@@ -792,13 +987,14 @@ const SETUP = {
   employees: { title: "Employees", table: "fam_employees", fields: [
     {k:"name",l:"Name",req:1},{k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool",def:true}]},
 };
+function setupKeys() { return Object.keys(SETUP).filter(k => !SETUP[k].adminOnly || isAdmin()); }
 async function vSetup() {
-  $("#main").innerHTML = '<h2>Setup</h2><p class="sub">Reference data used across the system</p><div class="tabs2" id="stabs"></div><div id="sbody"></div>';
-  renderSetupTabs();
-  renderSetup();
+  if (!setupKeys().includes(S.setupTab)) S.setupTab = setupKeys()[0];
+  $("#main").innerHTML = '<h2>Setup</h2><p class="sub">Reference data used across the system' + (isAdmin() ? '' : ' — companies & users are admin-only') + '</p><div class="tabs2" id="stabs"></div><div id="sbody"></div>';
+  renderSetupTabs(); renderSetup();
 }
 function renderSetupTabs() {
-  $("#stabs").innerHTML = Object.keys(SETUP).map(k =>
+  $("#stabs").innerHTML = setupKeys().map(k =>
     '<button class="' + (S.setupTab === k ? "on" : "") + '" onclick="S.setupTab=\'' + k + '\';renderSetupTabs();renderSetup()">' + SETUP[k].title + '</button>').join("");
 }
 async function renderSetup() {
@@ -806,14 +1002,14 @@ async function renderSetup() {
   await loadRefs();
   const rows = S.refs[S.setupTab] || [];
   $("#sbody").innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">' + cfg.title + '</h3><div class="sp"></div>' +
-    '<button class="btn" onclick="setupForm()">+ Add</button></div>' +
+    (P.ref() ? '<button class="btn" onclick="setupForm()">+ Add</button>' : '') + '</div>' +
     (rows.length ? '<div class="scroll"><table><thead><tr>' + cfg.fields.map(f => '<th>' + f.l + '</th>').join("") + '<th></th></tr></thead><tbody>' +
     rows.map(r => '<tr>' + cfg.fields.map(f => {
       let v = r[f.k];
       if (f.type === "ref") v = refName(S.refs[f.ref], v);
       if (f.type === "bool") v = v ? "Yes" : "No";
       return '<td>' + h(v == null ? "—" : v) + '</td>'; }).join("") +
-      '<td class="right"><button class="mini" onclick="setupForm(' + r.id + ')">Edit</button> <button class="mini danger" onclick="setupDelete(' + r.id + ')">Delete</button></td></tr>').join("") +
+      '<td class="right">' + (P.ref() ? '<button class="mini" onclick="setupForm(' + r.id + ')">Edit</button> ' : '') + (isAdmin() ? '<button class="mini danger" onclick="setupDelete(' + r.id + ')">Delete</button>' : '') + '</td></tr>').join("") +
     '</tbody></table></div>' : '<div class="empty">Nothing here yet.</div>') + '</div>';
 }
 function setupForm(id) {
@@ -858,6 +1054,65 @@ async function setupDelete(id) {
   }
 }
 
+/* ================= USERS (admin) ================= */
+async function callAdmin(payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(ADMIN_FN, {
+    method: "POST",
+    headers: { "content-type": "application/json", "apikey": SUPABASE_KEY, "Authorization": "Bearer " + (session ? session.access_token : "") },
+    body: JSON.stringify(payload),
+  });
+  let j; try { j = await r.json(); } catch (e) { j = { error: "Bad response" }; }
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+const ROLE_LIST = ["viewer","editor","preparer","approver","admin"];
+async function vUsers() {
+  let users = [];
+  try { const res = await callAdmin({ action: "list_users" }); users = res.users || []; }
+  catch (e) { $("#main").innerHTML = '<h2>Users</h2><div class="card empty">Could not load users: ' + h(e.message) + '</div>'; return; }
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Users</h2><p class="sub" style="margin:0">Create accounts and assign roles & company. Users sign in with email + password.</p></div><div class="sp"></div>' +
+    '<button class="btn" onclick="userForm()">+ New user</button></div>' +
+    '<div class="card">' + (users.length ?
+      '<div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
+      users.map(u => '<tr><td>' + h(u.full_name || "—") + '</td><td>' + h(u.email || "—") + '</td><td><span class="rolechip">' + h(u.role) + '</span></td><td>' + h(u.fam_companies ? u.fam_companies.name : (u.role === "admin" ? "All" : "—")) + '</td><td>' + (u.active ? pill("active") : pill("disposed").replace("disposed","inactive")) + '</td>' +
+        '<td class="right"><button class="mini" onclick=\'userForm(' + JSON.stringify(u).replace(/'/g,"&#39;") + ')\'>Edit</button> ' +
+        (u.id === S.me.id ? '' : '<button class="mini danger" onclick="userDelete(\'' + u.id + '\',\'' + h(u.email) + '\')">Delete</button>') + '</td></tr>').join("") +
+      '</tbody></table></div>' : '<div class="empty">No users yet.</div>') + '</div>';
+}
+function userForm(u) {
+  u = u || null;
+  const editing = !!u;
+  openModal(mhead(editing ? "Edit user" : "New user") +
+    '<div class="frow"><div><label>Full name</label><input id="u_name" value="' + h(u ? u.full_name : "") + '"></div>' +
+    '<div><label>Email</label><input id="u_email" type="email" value="' + h(u ? u.email : "") + '"' + (editing ? " disabled" : "") + '></div></div>' +
+    '<div class="frow"><div><label>Role</label><select id="u_role">' + ROLE_LIST.map(r => '<option value="' + r + '"' + (u && u.role === r ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
+    '<div><label>Company (blank = all, for admins)</label><select id="u_company">' + opts(S.refs.companies, u ? u.company_id : "", "All companies") + '</select></div></div>' +
+    '<label>' + (editing ? "Reset password (leave blank to keep)" : "Temporary password") + '</label><input id="u_pw" type="text" placeholder="' + (editing ? "unchanged" : "at least 6 characters") + '">' +
+    (editing ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') +
+    '<div class="note">Non-admin users only see and act on their assigned company. Admins see all companies.</div>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="userSave(' + (editing ? "'" + u.id + "'" : "null") + ')">Save</button></div>');
+}
+async function userSave(id) {
+  const role = val("u_role"), company_id = val("u_company") || null, full_name = val("u_name"), pw = val("u_pw");
+  try {
+    if (id) {
+      await callAdmin({ action: "update_user", id, role, company_id, full_name, active: val("u_active") === "true", password: pw || undefined });
+    } else {
+      const email = val("u_email");
+      if (!email) return toast("Email is required", true);
+      if (pw.length < 6) return toast("Password must be at least 6 characters", true);
+      await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_id });
+    }
+    closeModal(); toast("User saved"); vUsers();
+  } catch (e) { err(e); }
+}
+async function userDelete(id, email) {
+  try { await callAdmin({ action: "delete_user", id }); toast("User deleted"); vUsers(); }
+  catch (e) { err(e); }
+}
+
 /* ================= THEME & BOOT ================= */
 let themeMode = "auto";
 $("#themeBtn").onclick = () => {
@@ -868,13 +1123,10 @@ $("#themeBtn").onclick = () => {
 };
 (async function boot() {
   try {
-    await loadRefs();
-    renderNav();
-    go("dashboard");
-  } catch (e) {
-    err(e);
-    $("#main").innerHTML = '<div class="card empty">Could not connect to the database.<br>Check your internet connection and refresh.</div>';
-  }
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { loginScreen(); return; }
+    await loadMe();
+  } catch (e) { err(e); loginScreen("Could not connect. Refresh to try again."); }
 })();
 </script>
 </body>
