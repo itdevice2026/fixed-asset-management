@@ -228,6 +228,15 @@ function err(e) { console.error(e); toast((e && (e.message || e.details)) || "So
 
 function openModal(html, wide) { const m = $("#modal"); m.innerHTML = html; m.classList.toggle("wide", !!wide); $("#overlay").classList.add("on"); }
 function closeModal() { $("#overlay").classList.remove("on"); $("#modal").innerHTML = ""; $("#modal").classList.remove("wide"); }
+let _confirmCb = null;
+function confirmModal(title, body, okLabel, cb) {
+  _confirmCb = cb;
+  openModal('<h3 style="margin:0 0 10px">' + h(title) + '</h3>' +
+    '<p style="margin:0 0 18px;color:var(--muted);line-height:1.5">' + h(body) + '</p>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn danger" onclick="_runConfirm()">' + h(okLabel || "Confirm") + '</button></div>');
+}
+function _runConfirm() { const cb = _confirmCb; _confirmCb = null; if (cb) cb(); }
 document.addEventListener("click", e => { if (e.target === $("#overlay")) closeModal(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 const mhead = t => '<div class="mhead"><h3>' + h(t) + '</h3><button class="x" onclick="closeModal()">&times;</button></div>';
@@ -280,6 +289,39 @@ const RANK = { viewer:1, editor:2, preparer:3, approver:4, admin:5 };
 function myrank() { return (S.me && RANK[S.me.role]) || 0; }
 const P = { view:()=>myrank()>=1, ref:()=>myrank()>=2, prepare:()=>myrank()>=3, approve:()=>myrank()>=4, admin:()=>myrank()>=5 };
 function isAdmin() { return S.me && S.me.role === "admin"; }
+/* ===== Delete a created transaction (admin any; creator while still early-stage) ===== */
+function ownTxn(rec) { return rec && S.me && rec.created_by && String(rec.created_by) === String(S.me.id); }
+function canDeleteTxn(rec, earlyStates, statusField) {
+  if (P.admin()) return true;
+  return ownTxn(rec) && earlyStates.indexOf(rec[statusField || "status"]) >= 0;
+}
+/* config per transaction kind */
+const TXN_DEL = {
+  ar:   { table:"fam_asset_requests",   label:"asset request",     num:"ar_number", refresh:()=>vAssetRequests() },
+  pr:   { table:"fam_purchase_requests", label:"purchase requisition", num:"pr_number", refresh:()=>vRequests() },
+  po:   { table:"fam_purchase_orders",  label:"purchase order",    num:"po_number", refresh:()=>vPOs() },
+  disp: { table:"fam_disposals",        label:"disposal request",  num:"id",        refresh:()=>{ if (typeof vDisposals==="function") vDisposals(); } },
+};
+function askDeleteTxn(kind, id, num) {
+  const cfg = TXN_DEL[kind]; if (!cfg) return;
+  confirmModal("Delete " + cfg.label + (num ? " " + num : ""),
+    "This permanently removes the " + cfg.label + " and its line items. This cannot be undone.",
+    "Delete", () => txnDelete(kind, id));
+}
+async function txnDelete(kind, id) {
+  const cfg = TXN_DEL[kind]; if (!cfg) return;
+  try {
+    const { data, error } = await sb.from(cfg.table).delete().eq("id", id).select("id");
+    if (error) throw error;
+    if (!data || !data.length) return toast("You can only delete your own pending transactions.", true);
+    closeModal(); toast(cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1) + " deleted");
+    try { cfg.refresh(); } catch (e) {}
+  } catch (e) {
+    if (e && (e.code === "23503" || (e.message && /foreign key/i.test(e.message))))
+      return toast("Cannot delete — it has linked records (converted or received). Cancel it instead.", true);
+    err(e);
+  }
+}
 /* company field: admin picks; scoped user is fixed to their company */
 function multiCompany() { return (S.refs.companies || []).length > 1; }
 function companyField(id, selected) {
@@ -297,11 +339,6 @@ function employeesFor(companyId) {
   const list = S.refs.employees || [];
   if (!companyId) return list;
   return list.filter(e => e.company_id == null || String(e.company_id) === String(companyId));
-}
-function suppliersFor(companyId) {
-  const list = S.refs.suppliers || [];
-  if (!companyId) return list;
-  return list.filter(s => s.company_id == null || String(s.company_id) === String(companyId));
 }
 function companyLogoImg(companyId, px) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
@@ -595,10 +632,10 @@ async function arDetail(id) {
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'ar\',' + ar.id + ')">Print</button>' +
-      (canDeleteTxn(ar, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'ar\',' + ar.id + ',' + JSON.stringify(ar.ar_number || "asset request") + ')">Delete</button>' : "") +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
       (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
       (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
+      (canDeleteTxn(ar, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'ar\',' + ar.id + ',' + JSON.stringify(ar.ar_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
@@ -792,9 +829,9 @@ async function prDetail(id) {
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'pr\',' + pr.id + ')">Print</button>' +
-      (canDeleteTxn(pr, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'pr\',' + pr.id + ',' + JSON.stringify(pr.pr_number || "request") + ')">Delete</button>' : "") +
       (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
       (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
+      (canDeleteTxn(pr, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'pr\',' + pr.id + ',' + JSON.stringify(pr.pr_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
@@ -812,7 +849,7 @@ async function prConvert(id) {
     const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_pr_items(*)").eq("id", id).single();
     if (error) throw error;
     const { data: po, error: e1 } = await sb.from("fam_purchase_orders").insert(stamp({
-      company_id: pr.company_id, pr_id: pr.id, po_date: today(), status: "pending",
+      company_id: pr.company_id, pr_id: pr.id, po_date: today(), status: "ordered",
       notes: "From request " + (pr.pr_number || ""),
     })).select().single();
     if (e1) throw e1;
@@ -865,16 +902,14 @@ function poForm() {
   openModal(mhead("New purchase order") +
     '<div class="frow"><div><label>Company</label>' + companyField("f_company", defaultCompany()) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
-    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(defaultCompany()), "", "Select supplier…") + '</select></div>' +
-    '<div><label>Status</label><select id="f_status"><option value="pending">Submit for approval</option><option value="draft">Draft</option></select></div></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(S.refs.suppliers, "", "Select supplier…") + '</select></div>' +
+    '<div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div></div>' +
     '<div id="po_num_preview" class="note" style="margin-top:0"></div>' +
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>', true);
   wirePreview("po", "f_company", "f_po_date", "po_num_preview");
-  const coEl = $("#f_company");
-  if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("f_supplier"); const el = $("#f_supplier"); if (el) el.innerHTML = opts(suppliersFor(val("f_company")), cur, "Select supplier…"); });
 }
 async function poSave() {
   const company_id = val("f_company");
@@ -908,7 +943,6 @@ async function poDetail(id) {
     const recByItem = {}; (receipts || []).forEach(rc => recByItem[rc.po_item_id] = (recByItem[rc.po_item_id] || 0) + rc.received_qty);
     const items = po.fam_po_items || [];
     const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
-    const approved = ["ordered","partially_received","received"].includes(po.status);
     openModal(mhead("PO " + (po.po_number || "")) + companyLogoImg(po.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies?po.fam_companies.name:"—") + '</div>' +
       (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + h(po.fam_purchase_requests.pr_number) + '</div>' : "") +
@@ -916,36 +950,22 @@ async function poDetail(id) {
       '<div class="k">Date</div><div>' + dstr(po.po_date) + '</div>' +
       '<div class="k">Created by</div><div>' + h(po.created_by_name || "—") + '</div>' +
       '<div class="k">Status</div><div>' + pill(po.status) + '</div>' +
-      (po.approved_by_name ? '<div class="k">Approved by</div><div>' + h(po.approved_by_name) + '</div>' : "") +
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
-      (po.status === "pending" ? '<div class="note" style="margin-top:8px">This PO is awaiting approval before it can be issued and received.</div>' : "") +
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
         return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
         '<td class="right" style="white-space:nowrap">' +
-        (remRecv > 0 && approved && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
-        (rem > 0 && approved && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
+        (remRecv > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
+        (rem > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'po\',' + po.id + ')">Print</button>' +
-      (canDeleteTxn(po, ["draft","pending"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'po\',' + po.id + ',' + JSON.stringify(po.po_number || "PO") + ')">Delete</button>' : "") +
       (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
-      (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue PO</button>' : "") +
-      (po.status === "draft" && P.prepare() ? '<button class="btn" onclick="poStatus(' + po.id + ',\'pending\')">Submit for approval</button>' : "") +
-      ((po.status === "draft" || po.status === "pending" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
+      ((po.status === "draft" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
+      (canDeleteTxn(po, ["draft","pending"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'po\',' + po.id + ',' + JSON.stringify(po.po_number || "") + ')">Delete</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>', true);
-  } catch (e) { err(e); }
-}
-async function poApprove(id, status) {
-  if (!P.approve()) return toast("You don't have permission to approve POs", true);
-  try {
-    const patch = { status };
-    if (status === "ordered") patch.approved_by_name = meName();
-    const { error } = await sb.from("fam_purchase_orders").update(patch).eq("id", id);
-    if (error) throw error;
-    toast(status === "ordered" ? "PO approved & issued" : "PO rejected"); poDetail(id); if (S.view === "pos") vPOs();
   } catch (e) { err(e); }
 }
 async function poStatus(id, status) {
@@ -1061,36 +1081,6 @@ async function printReceivingReport(poId) {
       '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12.5px"><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Condition</th><th>Inspected by</th><th>Remarks</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Received &amp; inspected by</div><div class="sigline" style="flex:1">Approved by</div></div>');
   } catch (e) { err(e); }
-}
-/* ===== Delete a transaction (admin, or creator while still pending/draft) ===== */
-function ownTxn(rec) { return rec && S.me && rec.created_by && String(rec.created_by) === String(S.me.id); }
-function canDeleteTxn(rec, earlyStates, statusField) {
-  if (P.admin()) return true;
-  return ownTxn(rec) && earlyStates.indexOf(rec[statusField || "status"]) >= 0;
-}
-function askDeleteTxn(kind, id, label) {
-  openModal(mhead("Delete transaction") +
-    '<p style="margin:0 0 8px">Delete <strong>' + h(label || "") + '</strong>?</p>' +
-    '<div class="note">This permanently removes the transaction and its line items, and cannot be undone. Transactions that have already been converted or received (with linked records) cannot be deleted.</div>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" style="background:var(--critical);color:#fff" onclick="txnDelete(\'' + kind + '\',' + id + ')">Delete permanently</button></div>');
-}
-async function txnDelete(kind, id) {
-  const map = {
-    ar: { t: "fam_asset_requests", v: "arequests", fn: () => vAssetRequests() },
-    pr: { t: "fam_purchase_requests", v: "requests", fn: () => vRequests() },
-    po: { t: "fam_purchase_orders", v: "pos", fn: () => vPOs() },
-    disposal: { t: "fam_disposals", v: "disposals", fn: () => vDisposals() },
-  };
-  const m = map[kind]; if (!m) return;
-  try {
-    const { data, error } = await sb.from(m.t).delete().eq("id", id).select("id");
-    if (error) throw error;
-    if (!data || !data.length) { toast("You can only delete your own pending transactions.", true); return; }
-    closeModal(); toast("Transaction deleted"); if (S.view === m.v) m.fn();
-  } catch (e) {
-    if (e && e.code === "23503") toast("Cannot delete — it has linked records (converted or received). Cancel it instead.", true);
-    else err(e);
-  }
 }
 /* ===== Print a transaction document (Asset Request / Purchase Requisition / Purchase Order) ===== */
 async function printTxn(kind, id) {
@@ -1231,18 +1221,14 @@ async function assetForm(id) {
     '<div><label>Depreciation method</label><select id="a_depmethod">' + depMethodOpts(a.depreciation_method || "straight_line") + '</select></div></div>' +
     '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
-    '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(suppliersFor(a.company_id != null ? a.company_id : defaultCompany()), a.supplier_id, "—") + '</select></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(S.refs.suppliers, a.supplier_id, "—") + '</select></div>' +
     '<div><label>Custodian</label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
     '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
     '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div></div>' +
     '<label>Notes</label><textarea id="a_notes" rows="2">' + h(a.notes || "") + '</textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="assetSave(' + (id || "null") + ')">Save</button></div>');
   const coEl = $("#a_company");
-  if (coEl && multiCompany()) coEl.addEventListener("change", () => {
-    const co = val("a_company");
-    const cu = $("#a_cust"); if (cu) cu.innerHTML = opts(employeesFor(co), val("a_cust"), "—");
-    const su = $("#a_supplier"); if (su) su.innerHTML = opts(suppliersFor(co), val("a_supplier"), "—");
-  });
+  if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("a_cust"); const el = $("#a_cust"); if (el) el.innerHTML = opts(employeesFor(val("a_company")), cur, "—"); });
 }
 function catDefaults() {
   const c = (S.refs.categories || []).find(x => String(x.id) === val("a_cat"));
@@ -1359,7 +1345,7 @@ async function vDisposals() {
       '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Prepared by</th><th>Approval</th><th>Approved by</th><th></th></tr></thead><tbody>' +
       dis.map(d => { const gl = Number(d.gain_loss || 0);
         return '<tr><td>' + dstr(d.disposal_date) + '</td><td>' + h(an[d.asset_id] || "#" + d.asset_id) + '</td><td>' + h(d.method.replace(/_/g," ")) + '</td><td class="num">' + fmt(d.book_value_at_disposal) + '</td><td class="num">' + fmt(d.proceeds) + '</td><td class="num" style="color:' + (gl < 0 ? "var(--critical)" : "var(--good-text)") + '">' + (gl < 0 ? "(" + fmt(-gl) + ")" : fmt(gl)) + '</td><td>' + h(d.created_by_name || d.approved_by || "—") + '</td><td>' + pill(d.approval_status) + '</td><td>' + h(d.approved_by_name || "—") + '</td>' +
-        '<td class="right" style="white-space:nowrap">' + (d.approval_status === "pending" && P.approve() ? '<button class="btn3" onclick="disposeApprove(' + d.id + ',\'approved\')">Approve</button> <button class="btn3 danger" onclick="disposeApprove(' + d.id + ',\'rejected\')">Reject</button> ' : '') + (canDeleteTxn(d, ["pending","rejected"], "approval_status") ? '<button class="btn3 danger" onclick="askDeleteTxn(\'disposal\',' + d.id + ',' + JSON.stringify("disposal of " + (an[d.asset_id] || ("#" + d.asset_id))) + ')">Delete</button>' : '') + '</td></tr>'; }).join("") +
+        '<td class="right">' + (d.approval_status === "pending" && P.approve() ? '<button class="btn3" onclick="disposeApprove(' + d.id + ',\'approved\')">Approve</button> <button class="btn3 danger" onclick="disposeApprove(' + d.id + ',\'rejected\')">Reject</button> ' : '') + (canDeleteTxn(d, ["pending","rejected"], "approval_status") ? '<button class="btn3 danger" onclick="askDeleteTxn(\'disp\',' + d.id + ',\'\')">Delete</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' : '<div class="empty">No disposals recorded.</div>') + '</div>';
 }
 async function disposeForm(assetId) {
@@ -1562,12 +1548,7 @@ const SETUP = {
   companies: { title: "Companies", table: "fam_companies", adminOnly: true, fields: [
     {k:"name",l:"Company name",req:1},{k:"code",l:"Code (PO/PR prefix)"},{k:"logo_url",l:"Logo",type:"image"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   suppliers: { title: "Suppliers", table: "fam_suppliers", fields: [
-    {k:"company_id",l:"Company",type:"ref",ref:"companies",req:1},
-    {k:"vendor_code",l:"Vendor code"},{k:"name",l:"Name",req:1},
-    {k:"category",l:"Category",type:"select",opts:["Trade","Nontrade","Other"]},
-    {k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"},{k:"payment_terms",l:"Payment terms"}],
-    listFields: [
-    {k:"vendor_code",l:"Vendor code"},{k:"name",l:"Name"},{k:"category",l:"Category"},{k:"tin",l:"TIN"},{k:"payment_terms",l:"Terms"},{k:"company_id",l:"Company",type:"ref",ref:"companies"}]},
+    {k:"name",l:"Name",req:1},{k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   categories: { title: "Asset categories", table: "fam_categories", fields: [
     {k:"name",l:"Name",req:1},{k:"useful_life_months",l:"Useful life (months)",type:"number",req:1,def:60},{k:"salvage_rate",l:"Salvage rate (%)",type:"number",def:0}]},
   departments: { title: "Departments", table: "fam_departments", fields: [{k:"name",l:"Name",req:1}]},
@@ -1624,8 +1605,8 @@ function setupForm(id) {
       const rest = (parts.slice(1).join(",")).trim().split(/\s+/).filter(Boolean);
       r.first_name = rest.shift() || ""; r.middle_name = rest.join(" ");
     }
+    if (r.company_id == null) r.company_id = defaultCompany();
   }
-  if ((cfg.fields || []).some(f => f.k === "company_id") && r.company_id == null) r.company_id = defaultCompany();
   openModal(mhead((id ? "Edit " : "Add ") + cfg.title.toLowerCase().replace(/s$/, "")) +
     cfg.fields.map(f => {
       const v = r[f.k] != null ? r[f.k] : (f.def != null ? f.def : "");
