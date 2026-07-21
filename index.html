@@ -113,6 +113,17 @@ label:first-child{margin-top:0}
 .tabs2 button.on{background:var(--btn-bg);color:var(--btn-ink);border-color:transparent;font-weight:600}
 .scroll{overflow-x:auto}
 .right{text-align:right}
+#printarea{display:none}
+@media print{
+  body.printing>*{display:none !important}
+  body.printing #printarea{display:block !important}
+  .print-doc{font-family:system-ui,-apple-system,sans-serif;color:#000;padding:6px}
+  .print-doc img{max-width:220px}
+  .print-tag{border:2px solid #000;border-radius:10px;padding:14px 18px;width:330px;text-align:center;margin:0 auto}
+  .print-tag .code{font-size:34px;font-weight:800;letter-spacing:1px;font-family:ui-monospace,monospace;margin:4px 0}
+  .sigline{border-top:1px solid #000;margin-top:40px;padding-top:4px;font-size:12px}
+  .print-doc table{width:100%;border-collapse:collapse}
+}
 .userbadge{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
 .userbadge .who{font-weight:600;color:var(--ink-1)}
 .rolechip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--ring);color:var(--ink-2)}
@@ -140,6 +151,7 @@ label:first-child{margin-top:0}
 <main id="main"></main>
 <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
 <div id="toast"></div>
+<div id="printarea"></div>
 <script>
 var supabase=(function(m){function ve(t,e){var r={};for(var s in t)Object.prototype.hasOwnProperty.call(t,s)&&e.indexOf(s)<0&&(r[s]=t[s]);if(t!=null&&typeof Object.getOwnPropertySymbols=="function")for(var i=0,s=Object.getOwnPropertySymbols(t);i<s.length;i++)e.indexOf(s[i])<0&&Object.prototype.propertyIsEnumerable.call(t,s[i])&&(r[s[i]]=t[s[i]]);return r}function gt(t,e,r,s){function i(n){return n instanceof r?n:new r(function(a){a(n)})}return new(r||=Promise)(function(n,a){function o(c){try{h(s.next(c))}catch(u){a(u)}}function l(c){try{h(s.throw(c))}catch(u){a(u)}}function h(c){c.done?n(c.value):i(c.value).then(o,l)}h((s=s.apply(t,e||[])).next())})}let Or=t=>t?(...e)=>t(...e):(...e)=>fetch(...e);var Se=class extends Error{constructor(t,e="FunctionsError",r){super(t),this.name=e,this.context=r}toJSON(){return{name:this.name,message:this.message,context:this.context}}},mt=class extends Se{constructor(t){super("Failed to send a request to the Edge Function","FunctionsFetchError",t)}},Fe=class extends Se{constructor(t){super("Relay Error invoking the Edge Function","FunctionsRelayError",t)}},Je=class extends Se{constructor(t){super("Edge Function returned a non-2xx status code","FunctionsHttpError",t)}},Ge;(function(t){t.Any="any",t.ApNortheast1="ap-northeast-1",t.ApNortheast2="ap-northeast-2",t.ApSouth1="ap-south-1",t.ApSoutheast1="ap-southeast-1",t.ApSoutheast2="ap-southeast-2",t.CaCentral1="ca-central-1",t.EuCentral1="eu-central-1",t.EuWest1="eu-west-1",t.EuWest2="eu-west-2",t.EuWest3="eu-west-3",t.SaEast1="sa-east-1",t.UsEast1="us-east-1",t.UsWest1="us-west-1",t.UsWest2="us-west-2"})(Ge||={});var jr=class{constructor(t,{headers:e={},customFetch:r,region:s=Ge.Any}={}){this.url=t,this.headers=e,this.region=s,this.fetch=Or(r)}setAuth(t){this.headers.Authorization=`Bearer ${t}`}invoke(t){return gt(this,arguments,void 0,function*(e,r={}){let s,i;try{let{headers:n,method:a,body:o,signal:l,timeout:h}=r,c={},{region:u}=r;u||=this.region;let d=new URL(`${this.url}/${e}`);u&&u!=="any"&&(c["x-region"]=u,d.searchParams.set("forceFunctionRegion",u));let f,b=!!n&&Object.keys(n).some(ae=>ae.toLowerCase()==="content-type");o&&!b?typeof Blob<"u"&&o instanceof Blob||o instanceof ArrayBuffer?(c["Content-Type"]="application/octet-stream",f=o):typeof o=="string"?(c["Content-Type"]="text/plain",f=o):typeof FormData<"u"&&o instanceof FormData?f=o:(c["Content-Type"]="application/json",f=JSON.stringify(o)):f=o&&typeof o!="string"&&!(typeof Blob<"u"&&o instanceof Blob)&&!(o instanceof ArrayBuffer)&&!(typeof FormData<"u"&&o instanceof FormData)?JSON.stringify(o):o;let w=l;h&&(i=new AbortController,s=setTimeout(()=>i.abort(),h),l?(w=i.signal,l.addEventListener("abort",()=>i.abort())):w=i.signal);let _=yield this.fetch(d.toString(),{method:a||"POST",headers:Object.assign(Object.assign(Object.assign({},c),this.headers),n),body:f,signal:w}).catch(ae=>{throw new mt(ae)}),Me=_.headers.get("x-relay-error");if(Me&&Me==="true")throw new Fe(_);if(!_.ok)throw new Je(_);let K=(_.headers.get("Content-Type")??"text/plain").split(";")[0].trim(),_e;return _e=K==="application/json"?yield _.json():K==="application/octet-stream"||K==="application/pdf"?yield _.blob():K==="text/event-stream"?_:K==="multipart/form-data"?yield _.formData():yield _.text(),{data:_e,error:null,response:_}}catch(n){return{data:null,error:n,response:n instanceof Je||n instanceof Fe?n.context:void 0}}finally{s&&clearTimeout(s)}})}};let yt=t=>Math.min(1e3*2**t,3e4),Pr=[520,503],bt=["GET","HEAD","OPTIONS"];var ze=class extends Error{constructor(t){super(t.message),this.name="PostgrestError",this.details=t.details,this.hint=t.hint,this.code=t.code}toJSON(){return{name:this.name,message:this.message,details:this.details,hint:this.hint,code:this.code}}};function wt(t,e){return new Promise(r=>{if(e?.aborted){r();return}let s=setTimeout(()=>{e?.removeEventListener("abort",i),r()},t);function i(){clearTimeout(s),r()}e?.addEventListener("abort",i)})}function Cr(t,e,r,s){return!(!s||r>=3||!bt.includes(t)||!Pr.includes(e))}var $r=class{constructor(t){this.shouldThrowOnError=!1,this.retryEnabled=!0,this.method=t.method,this.url=t.url,this.headers=new Headers(t.headers),this.schema=t.schema,this.body=t.body,this.shouldThrowOnError=t.shouldThrowOnError??!1,this.signal=t.signal,this.isMaybeSingle=t.isMaybeSingle??!1,this.shouldStripNulls=t.shouldStripNulls??!1,this.urlLengthLimit=t.urlLengthLimit??8e3,this.retryEnabled=t.retry??!0,t.fetch?this.fetch=t.fetch:this.fetch=fetch}throwOnError(){return this.shouldThrowOnError=!0,this}stripNulls(){if(this.headers.get("Accept")==="text/csv")throw Error("stripNulls() cannot be used with csv()");return this.shouldStripNulls=!0,this}setHeader(t,e){return this.headers=new Headers(this.headers),this.headers.set(t,e),this}retry(t){return this.retryEnabled=t,this}then(t,e){var r=this;if(this.schema===void 0||(["GET","HEAD"].includes(this.method)?this.headers.set("Accept-Profile",this.schema):this.headers.set("Content-Profile",this.schema)),this.method!=="GET"&&this.method!=="HEAD"&&this.headers.set("Content-Type","application/json"),this.shouldStripNulls){let n=this.headers.get("Accept");n==="application/vnd.pgrst.object+json"?this.headers.set("Accept","application/vnd.pgrst.object+json;nulls=stripped"):(!n||n==="application/json")&&this.headers.set("Accept","application/vnd.pgrst.array+json;nulls=stripped")}let s=this.fetch,i=(async()=>{let n=0;for(;;){let a={};r.headers.forEach((l,h)=>{a[h]=l}),n>0&&(a["X-Retry-Count"]=String(n));let o;try{o=await s(r.url.toString(),{method:r.method,headers:a,body:JSON.stringify(r.body,(l,h)=>typeof h=="bigint"?h.toString():h),signal:r.signal})}catch(l){if(l?.name==="AbortError"||l?.code==="ABORT_ERR"||!bt.includes(r.method))throw l;if(r.retryEnabled&&n<3){let h=yt(n);n++,await wt(h,r.signal);continue}throw l}if(Cr(r.method,o.status,n,r.retryEnabled)){let l=o.headers?.get("Retry-After")??null,h=l===null?yt(n):Math.max(0,parseInt(l,10)||0)*1e3;await o.text(),n++,await wt(h,r.signal);continue}return await r.processResponse(o)}})();return this.shouldThrowOnError||(i=i.catch(n=>{let a="",o="",l="",h=n?.cause;if(h){let u=h?.message??"",d=h?.code??"";a=`${n?.name??"FetchError"}: ${n?.message}`,a+=`
 
@@ -231,6 +243,13 @@ function depAt(r, asof) {
   if (r.disposal_date && new Date(r.disposal_date) < new Date(asof)) cut = r.disposal_date;
   const m = Math.min(r.useful_life_months, monthsFull(start, cut));
   return Math.round((r.acquisition_cost - r.salvage_value) * m / r.useful_life_months * 100) / 100;
+}
+function printBlock(html) {
+  const pa = $("#printarea"); if (!pa) return;
+  pa.innerHTML = '<div class="print-doc">' + html + '</div>';
+  document.body.classList.add("printing");
+  window.print();
+  setTimeout(() => { document.body.classList.remove("printing"); pa.innerHTML = ""; }, 800);
 }
 function downloadCSV(name, cols, rows) {
   const esc = v => { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
@@ -754,6 +773,8 @@ async function poDetail(id) {
     const { data: assets } = await sb.from("fam_assets").select("id, po_item_id").eq("po_id", id);
     const regByItem = {};
     (assets || []).forEach(a => regByItem[a.po_item_id] = (regByItem[a.po_item_id] || 0) + 1);
+    const { data: receipts } = await sb.from("fam_receipts").select("*").eq("po_id", id);
+    const recByItem = {}; (receipts || []).forEach(rc => recByItem[rc.po_item_id] = (recByItem[rc.po_item_id] || 0) + rc.received_qty);
     const items = po.fam_po_items || [];
     const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
     openModal(mhead("PO " + (po.po_number || "")) + companyLogoImg(po.company_id) +
@@ -764,13 +785,16 @@ async function poDetail(id) {
       '<div class="k">Status</div><div>' + pill(po.status) + '</div>' +
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
-      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
+      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
-        return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
-        '<td class="right">' + (rem > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
+        const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
+        return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
+        '<td class="right" style="white-space:nowrap">' +
+        (remRecv > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
+        (rem > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
-      (po.status !== "received" && po.status !== "cancelled" && P.approve() ? '<button class="btn2" onclick="poStatus(' + po.id + ',\'received\')">Mark received</button>' : "") +
+      (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
       ((po.status === "draft" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -827,6 +851,68 @@ async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
     toast(qty + " asset(s) registered"); poDetail(poId); if (S.view === "pos") vPOs();
   } catch (e) { err(e); }
 }
+
+/* ===== Receiving Report (step 5) ===== */
+async function receiveForm(poId, itemId) {
+  try {
+    const { data: item, error } = await sb.from("fam_po_items").select("*").eq("id", itemId).single();
+    if (error) throw error;
+    const { data: recs } = await sb.from("fam_receipts").select("received_qty").eq("po_item_id", itemId);
+    const already = (recs || []).reduce((s, r) => s + r.received_qty, 0);
+    const rem = item.quantity - already;
+    openModal(mhead("Receive — " + item.description) +
+      '<div class="frow3"><div><label>Received qty</label><input type="number" id="rv_qty" min="1" max="' + rem + '" value="' + rem + '"></div>' +
+      '<div><label>Receipt date</label><input type="date" id="rv_date" value="' + today() + '"></div>' +
+      '<div><label>Condition</label><select id="rv_cond">' + ["good","damaged","short","wrong_item"].map(c => '<option value="' + c + '">' + c.replace(/_/g," ") + '</option>').join("") + '</select></div></div>' +
+      '<div class="frow"><div><label>Inspected by</label><input id="rv_by" value="' + h(S.me.full_name || "") + '"></div>' +
+      '<div><label>Remarks</label><input id="rv_remarks"></div></div>' +
+      '<div class="note">Ordered ' + item.quantity + ' · already received ' + already + ' · remaining ' + rem + '.</div>' +
+      '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="receiveSave(' + poId + ',' + itemId + ')">Record receipt</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function receiveSave(poId, itemId) {
+  const qty = Number(val("rv_qty") || 0);
+  if (qty < 1) return toast("Received quantity must be at least 1", true);
+  try {
+    const { error } = await sb.from("fam_receipts").insert({
+      po_id: poId, po_item_id: itemId, received_qty: qty, condition: val("rv_cond"),
+      inspected_by: val("rv_by") || null, receipt_date: val("rv_date") || today(), remarks: val("rv_remarks") || null,
+    });
+    if (error) throw error;
+    await recomputePOStatus(poId);
+    toast("Receipt recorded"); poDetail(poId); if (S.view === "pos") vPOs();
+  } catch (e) { err(e); }
+}
+async function recomputePOStatus(poId) {
+  try {
+    const { data: po } = await sb.from("fam_purchase_orders").select("status, fam_po_items(id,quantity)").eq("id", poId).single();
+    if (!po || po.status === "cancelled") return;
+    const { data: rec } = await sb.from("fam_receipts").select("po_item_id,received_qty").eq("po_id", poId);
+    const recBy = {}; (rec || []).forEach(r => recBy[r.po_item_id] = (recBy[r.po_item_id] || 0) + r.received_qty);
+    const items = po.fam_po_items || [];
+    const totOrder = items.reduce((s, i) => s + i.quantity, 0);
+    const totRec = items.reduce((s, i) => s + Math.min(i.quantity, recBy[i.id] || 0), 0);
+    let status = po.status;
+    if (totRec >= totOrder && totOrder > 0) status = "received";
+    else if (totRec > 0) status = "partially_received";
+    if (status !== po.status) await sb.from("fam_purchase_orders").update({ status }).eq("id", poId);
+  } catch (e) {}
+}
+async function printReceivingReport(poId) {
+  try {
+    const { data: po } = await sb.from("fam_purchase_orders").select("*, fam_companies(name,logo_url), fam_suppliers(name), fam_po_items(*)").eq("id", poId).single();
+    const { data: receipts } = await sb.from("fam_receipts").select("*").eq("po_id", poId).order("id");
+    const itById = {}; (po.fam_po_items || []).forEach(i => itById[i.id] = i);
+    const co = po.fam_companies || {};
+    const logo = co.logo_url ? '<img src="' + co.logo_url + '" alt="">' : "";
+    let rows = (receipts || []).map(r => '<tr><td>' + dstr(r.receipt_date) + '</td><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td style="text-align:right">' + r.received_qty + '</td><td>' + h((r.condition||"").replace(/_/g," ")) + '</td><td>' + h(r.inspected_by || "") + '</td><td>' + h(r.remarks || "") + '</td></tr>').join("");
+    if (!rows) rows = '<tr><td colspan="6">No receipts recorded.</td></tr>';
+    printBlock(logo + '<h2 style="margin:8px 0 2px">Receiving Report</h2>' +
+      '<div style="font-size:13px;margin-bottom:8px">' + h(co.name || "") + ' &nbsp;·&nbsp; PO ' + h(po.po_number || "") + ' &nbsp;·&nbsp; Supplier: ' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + ' &nbsp;·&nbsp; ' + dstr(today()) + '</div>' +
+      '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12.5px"><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Condition</th><th>Inspected by</th><th>Remarks</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Received &amp; inspected by</div><div class="sigline" style="flex:1">Approved by</div></div>');
+  } catch (e) { err(e); }
+}
 </script>
 <script>
 /* ================= ASSETS ================= */
@@ -858,10 +944,28 @@ function renderAssetTable() {
     '</tbody></table></div><div class="note">' + rows.length + ' asset(s) · Cost ' + fmt(rows.reduce((s, r) => s + +r.acquisition_cost, 0)) + ' · NBV ' + fmt(rows.reduce((s, r) => s + +r.net_book_value, 0)) + '</div>'
     : '<div class="empty">No assets match.</div>';
 }
+function printAssetTag() {
+  const r = window._curAsset; if (!r) return;
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(r.company_id));
+  const logo = c && c.logo_url ? '<img src="' + c.logo_url + '" alt="" style="height:34px;margin-bottom:6px">' : "";
+  printBlock('<div class="print-tag">' + logo + '<div style="font-size:12px">' + h(c ? c.name : "") + '</div><div class="code">' + h(r.asset_code) + '</div><div style="font-size:13px;font-weight:600">' + h(r.name) + '</div><div style="font-size:11px;color:#333">' + h(r.category_name || "") + '</div></div>');
+}
+function printAccountability() {
+  const r = window._curAsset; if (!r) return;
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(r.company_id));
+  const logo = c && c.logo_url ? '<img src="' + c.logo_url + '" alt="">' : "";
+  const rowsD = [["Company", c ? c.name : ""],["Asset code", r.asset_code],["Description", r.name],["Category", r.category_name || ""],["Serial / Model", (r.serial_number || "—") + " / " + (r.model || "—")],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center || "—"],["Department", r.department_name || "—"],["Location", r.location_name || "—"],["Custodian", r.custodian_name || "—"]];
+  printBlock(logo + '<h2 style="margin:8px 0 2px">Asset Accountability Form</h2>' +
+    '<table style="font-size:13px;border-collapse:collapse;margin-top:6px">' +
+    rowsD.map(x => '<tr><td style="padding:4px 12px;color:#555;width:190px">' + h(x[0]) + '</td><td style="padding:4px 12px;font-weight:600">' + h(x[1]) + '</td></tr>').join("") + '</table>' +
+    '<p style="font-size:12px;margin-top:16px">I acknowledge accountability for the asset described above and undertake to use and safekeep it in accordance with company policy.</p>' +
+    '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Custodian — signature over printed name</div><div class="sigline" style="flex:1">Issued by / Date</div></div>');
+}
 async function assetDetail(id) {
   try {
     let r = REG_CACHE.find(x => x.id === id);
     if (!r) { const { data, error } = await sb.from("fam_v_asset_register").select("*").eq("id", id).single(); if (error) throw error; r = data; }
+    window._curAsset = r;
     const pct = Math.min(100, Math.round(r.months_depreciated / r.useful_life_months * 100));
     openModal(mhead(r.asset_code + " — " + r.name) +
       '<div class="kv">' +
@@ -882,6 +986,7 @@ async function assetDetail(id) {
       (r.disposal_date ? '<div class="k">Disposed</div><div>' + dstr(r.disposal_date) + ' (' + h(r.disposal_method) + ')</div>' : "") +
       (r.notes ? '<div class="k">Notes</div><div>' + h(r.notes) + '</div>' : "") +
       '</div><div class="mfoot">' +
+      '<button class="btn2" onclick="printAssetTag()">Print tag</button><button class="btn2" onclick="printAccountability()">Accountability form</button>' +
       (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>');
   } catch (e) { err(e); }
