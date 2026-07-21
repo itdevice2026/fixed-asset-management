@@ -298,6 +298,11 @@ function employeesFor(companyId) {
   if (!companyId) return list;
   return list.filter(e => e.company_id == null || String(e.company_id) === String(companyId));
 }
+function suppliersFor(companyId) {
+  const list = S.refs.suppliers || [];
+  if (!companyId) return list;
+  return list.filter(s => s.company_id == null || String(s.company_id) === String(companyId));
+}
 function companyLogoImg(companyId, px) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
   return (c && c.logo_url) ? '<img src="' + h(c.logo_url) + '" alt="" style="height:' + (px || 40) + 'px;max-width:180px;object-fit:contain;display:block;margin:0 0 10px">' : '';
@@ -858,7 +863,7 @@ function poForm() {
   openModal(mhead("New purchase order") +
     '<div class="frow"><div><label>Company</label>' + companyField("f_company", defaultCompany()) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
-    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(S.refs.suppliers, "", "Select supplier…") + '</select></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(defaultCompany()), "", "Select supplier…") + '</select></div>' +
     '<div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div></div>' +
     '<div id="po_num_preview" class="note" style="margin-top:0"></div>' +
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
@@ -866,6 +871,8 @@ function poForm() {
     '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>', true);
   wirePreview("po", "f_company", "f_po_date", "po_num_preview");
+  const coEl = $("#f_company");
+  if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("f_supplier"); const el = $("#f_supplier"); if (el) el.innerHTML = opts(suppliersFor(val("f_company")), cur, "Select supplier…"); });
 }
 async function poSave() {
   const company_id = val("f_company");
@@ -1176,14 +1183,18 @@ async function assetForm(id) {
     '<div><label>Depreciation method</label><select id="a_depmethod">' + depMethodOpts(a.depreciation_method || "straight_line") + '</select></div></div>' +
     '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
-    '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(S.refs.suppliers, a.supplier_id, "—") + '</select></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(suppliersFor(a.company_id != null ? a.company_id : defaultCompany()), a.supplier_id, "—") + '</select></div>' +
     '<div><label>Custodian</label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
     '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
     '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div></div>' +
     '<label>Notes</label><textarea id="a_notes" rows="2">' + h(a.notes || "") + '</textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="assetSave(' + (id || "null") + ')">Save</button></div>');
   const coEl = $("#a_company");
-  if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("a_cust"); const el = $("#a_cust"); if (el) el.innerHTML = opts(employeesFor(val("a_company")), cur, "—"); });
+  if (coEl && multiCompany()) coEl.addEventListener("change", () => {
+    const co = val("a_company");
+    const cu = $("#a_cust"); if (cu) cu.innerHTML = opts(employeesFor(co), val("a_cust"), "—");
+    const su = $("#a_supplier"); if (su) su.innerHTML = opts(suppliersFor(co), val("a_supplier"), "—");
+  });
 }
 function catDefaults() {
   const c = (S.refs.categories || []).find(x => String(x.id) === val("a_cat"));
@@ -1503,7 +1514,12 @@ const SETUP = {
   companies: { title: "Companies", table: "fam_companies", adminOnly: true, fields: [
     {k:"name",l:"Company name",req:1},{k:"code",l:"Code (PO/PR prefix)"},{k:"logo_url",l:"Logo",type:"image"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   suppliers: { title: "Suppliers", table: "fam_suppliers", fields: [
-    {k:"name",l:"Name",req:1},{k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
+    {k:"company_id",l:"Company",type:"ref",ref:"companies",req:1},
+    {k:"vendor_code",l:"Vendor code"},{k:"name",l:"Name",req:1},
+    {k:"category",l:"Category",type:"select",opts:["Trade","Nontrade","Other"]},
+    {k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"},{k:"payment_terms",l:"Payment terms"}],
+    listFields: [
+    {k:"vendor_code",l:"Vendor code"},{k:"name",l:"Name"},{k:"category",l:"Category"},{k:"tin",l:"TIN"},{k:"payment_terms",l:"Terms"},{k:"company_id",l:"Company",type:"ref",ref:"companies"}]},
   categories: { title: "Asset categories", table: "fam_categories", fields: [
     {k:"name",l:"Name",req:1},{k:"useful_life_months",l:"Useful life (months)",type:"number",req:1,def:60},{k:"salvage_rate",l:"Salvage rate (%)",type:"number",def:0}]},
   departments: { title: "Departments", table: "fam_departments", fields: [{k:"name",l:"Name",req:1}]},
@@ -1560,8 +1576,8 @@ function setupForm(id) {
       const rest = (parts.slice(1).join(",")).trim().split(/\s+/).filter(Boolean);
       r.first_name = rest.shift() || ""; r.middle_name = rest.join(" ");
     }
-    if (r.company_id == null) r.company_id = defaultCompany();
   }
+  if ((cfg.fields || []).some(f => f.k === "company_id") && r.company_id == null) r.company_id = defaultCompany();
   openModal(mhead((id ? "Edit " : "Add ") + cfg.title.toLowerCase().replace(/s$/, "")) +
     cfg.fields.map(f => {
       const v = r[f.k] != null ? r[f.k] : (f.def != null ? f.def : "");
