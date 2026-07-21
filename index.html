@@ -1511,10 +1511,14 @@ const SETUP = {
   employees: { title: "Employees", table: "fam_employees", bulk: true, fields: [
     {k:"company_id",l:"Company",type:"ref",ref:"companies",req:1},
     {k:"employee_id",l:"Employee ID"},{k:"last_name",l:"Last name",req:1},{k:"first_name",l:"First name"},{k:"middle_name",l:"Middle name"},
-    {k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool",def:true}],
+    {k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"location_id",l:"Location",type:"ref",ref:"locations"},
+    {k:"supervisor",l:"Immediate supervisor"},
+    {k:"employee_type",l:"Employee type",type:"select",opts:["Regular","Probationary","Contractual","Project-based","Casual","Seasonal","Consultant"]},
+    {k:"active",l:"Active",type:"bool",def:true}],
     listFields: [
-    {k:"employee_id",l:"Employee ID"},{k:"name",l:"Full name (Last, First Middle)"},{k:"company_id",l:"Company",type:"ref",ref:"companies"},{k:"position",l:"Position"},
-    {k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool"}]},
+    {k:"employee_id",l:"Employee ID"},{k:"name",l:"Full name (Last, First Middle)"},{k:"company_id",l:"Company",type:"ref",ref:"companies"},
+    {k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"location_id",l:"Location",type:"ref",ref:"locations"},{k:"position",l:"Position"},
+    {k:"supervisor",l:"Supervisor"},{k:"employee_type",l:"Type"},{k:"active",l:"Active",type:"bool"}]},
 };
 function composeName(l, f, m) { l = (l||"").trim(); f = (f||"").trim(); m = (m||"").trim(); let n = l; if (f) n += (l ? ", " : "") + f; if (m) n += " " + m; return n.trim(); }
 function setupKeys() { return Object.keys(SETUP).filter(k => !SETUP[k].adminOnly || isAdmin()); }
@@ -1563,6 +1567,7 @@ function setupForm(id) {
       const v = r[f.k] != null ? r[f.k] : (f.def != null ? f.def : "");
       if (f.type === "ref") return '<label>' + f.l + '</label><select id="s_' + f.k + '">' + opts(S.refs[f.ref], v, "—") + '</select>';
       if (f.type === "bool") return '<label>' + f.l + '</label><select id="s_' + f.k + '"><option value="true"' + (v ? " selected" : "") + '>Yes</option><option value="false"' + (!v ? " selected" : "") + '>No</option></select>';
+      if (f.type === "select") return '<label>' + f.l + '</label><select id="s_' + f.k + '"><option value="">—</option>' + (f.opts || []).map(o => '<option' + (String(v) === o ? " selected" : "") + '>' + h(o) + '</option>').join("") + '</select>';
       if (f.type === "image") return '<label>' + f.l + '</label>' +
         '<div id="s_' + f.k + '_prev" style="margin-bottom:6px">' + (v ? '<img src="' + h(v) + '" alt="" style="max-height:64px;border:1px solid var(--grid);border-radius:8px;padding:4px;background:#fff">' : '<span class="note">No logo yet</span>') + '</div>' +
         '<input type="hidden" id="s_' + f.k + '" value="' + h(v) + '">' +
@@ -1640,6 +1645,9 @@ function bulkForm() {
     '<div class="k">Last Name</div><div>required</div><div class="k">First Name</div><div>optional</div>' +
     '<div class="k">Middle Name</div><div>optional</div><div class="k">Position</div><div>optional</div>' +
     '<div class="k">Department</div><div>optional — matched by name to your Departments list</div>' +
+    '<div class="k">Location</div><div>optional — matched by name; new locations are created automatically</div>' +
+    '<div class="k">Immediate Supervisor</div><div>optional — free text</div>' +
+    '<div class="k">Employee Type</div><div>optional — e.g. Regular, Probationary, Contractual</div>' +
     '<div class="k">Company</div><div>' + (multiCompany() ? "matched by name or code; blank rows default to your company" : "optional — defaults to " + h(refName(S.refs.companies, defaultCompany()))) + '</div></div>' +
     '<p class="note">Full name is stored as “Lastname, Firstname Middlename”. Every employee is assigned to a company.</p>' +
     '<label>CSV file</label><input type="file" accept=".csv,text/csv" id="bulk_file">' +
@@ -1650,8 +1658,8 @@ function bulkForm() {
 function bulkTemplate() {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(defaultCompany())) || (S.refs.companies || [])[0] || {};
   downloadCSV("employees_template.csv",
-    [{label:"Employee ID",get:"employee_id"},{label:"Last Name",get:"last_name"},{label:"First Name",get:"first_name"},{label:"Middle Name",get:"middle_name"},{label:"Position",get:"position"},{label:"Department",get:"department"},{label:"Company",get:"company"}],
-    [{employee_id:"EMP-0001",last_name:"Dela Cruz",first_name:"Juan",middle_name:"Santos",position:"Accountant",department:"Accounting",company:c.name || ""}]);
+    [{label:"Employee ID",get:"employee_id"},{label:"Last Name",get:"last_name"},{label:"Middle Name",get:"middle_name"},{label:"First Name",get:"first_name"},{label:"Department",get:"department"},{label:"Location",get:"location"},{label:"Immediate Supervisor",get:"supervisor"},{label:"Position",get:"position"},{label:"Employee Type",get:"employee_type"},{label:"Company",get:"company"}],
+    [{employee_id:"EMP-0001",last_name:"Dela Cruz",middle_name:"Santos",first_name:"Juan",department:"Accounting",location:"Head Office",supervisor:"Maria Reyes",position:"Accountant",employee_type:"Regular",company:c.name || ""}]);
 }
 function parseCSV(text) {
   const rows = []; let field = "", row = [], inQ = false;
@@ -1683,11 +1691,27 @@ async function bulkImport() {
     const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
     const iId = col("employeeid","id","empid"), iLast = col("lastname","last","surname"),
       iFirst = col("firstname","first","givenname"), iMid = col("middlename","middle","middleinitial","mi"),
-      iPos = col("position","title","role","designation"), iDept = col("department","dept"), iCo = col("company","companyname","companycode");
+      iPos = col("position","title","role","designation"), iDept = col("department","dept"), iCo = col("company","companyname","companycode"),
+      iLoc = col("location","loc","branch","site"), iSup = col("immediatesupervisor","supervisor","reportsto","superior"),
+      iType = col("employeetype","employmenttype","emptype","type");
     if (iLast < 0) throw new Error('No "Last Name" column found in the header row.');
     const deptByName = {}; (S.refs.departments || []).forEach(d => deptByName[norm(d.name)] = d.id);
     const coByKey = {}; (S.refs.companies || []).forEach(co => { coByKey[norm(co.name)] = co.id; if (co.code) coByKey[norm(co.code)] = co.id; });
+    const locByName = {}; (S.refs.locations || []).forEach(l => locByName[norm(l.name)] = l.id);
     const defCo = defaultCompany() || null;
+    // auto-create any locations that don't exist yet
+    let createdLoc = 0;
+    if (iLoc >= 0) {
+      const wanted = {};
+      for (let r = 1; r < rows.length; r++) { const ln = (rows[r][iLoc] || "").trim(); if (ln && !locByName[norm(ln)]) wanted[norm(ln)] = ln; }
+      const toAdd = Object.values(wanted);
+      if (toAdd.length) {
+        const { data: newLocs, error: le } = await sb.from("fam_locations").insert(toAdd.map(n => ({ name: n }))).select("id,name");
+        if (le) throw le;
+        (newLocs || []).forEach(l => locByName[norm(l.name)] = l.id);
+        createdLoc = (newLocs || []).length;
+      }
+    }
     const withId = [], noId = []; let unresolvedDept = 0, unresolvedCo = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
       const c = rows[r];
@@ -1700,9 +1724,12 @@ async function bulkImport() {
       if (iDept >= 0) { const dn = (c[iDept] || "").trim(); if (dn) { deptId = deptByName[norm(dn)] || null; if (!deptId) unresolvedDept++; } }
       let coId = defCo;
       if (iCo >= 0) { const cn = (c[iCo] || "").trim(); if (cn) { coId = coByKey[norm(cn)] || null; if (!coId) { unresolvedCo++; coId = defCo; } } }
+      const locId = iLoc >= 0 ? (locByName[norm((c[iLoc] || "").trim())] || null) : null;
       const rec = { employee_id: empId || null, last_name: last, first_name: first || null, middle_name: mid || null,
         name: composeName(last, first, mid), position: (iPos >= 0 ? (c[iPos] || "").trim() : "") || null,
-        department_id: deptId, company_id: coId, active: true };
+        department_id: deptId, location_id: locId, company_id: coId,
+        supervisor: (iSup >= 0 ? (c[iSup] || "").trim() : "") || null,
+        employee_type: (iType >= 0 ? (c[iType] || "").trim() : "") || null, active: true };
       (empId ? withId : noId).push(rec);
     }
     if (!withId.length && !noId.length) throw new Error("No valid rows (every row needs at least a last name).");
@@ -1719,7 +1746,7 @@ async function bulkImport() {
     let msg = "Imported " + (inserted + updated) + " employees";
     if (withId.length && noId.length) msg = "Imported " + noId.length + " new + " + withId.length + " by ID";
     closeModal();
-    toast(msg + (skipped ? " · " + skipped + " skipped (no last name)" : "") + (unresolvedDept ? " · " + unresolvedDept + " unmatched dept" : "") + (unresolvedCo ? " · " + unresolvedCo + " company defaulted" : ""));
+    toast(msg + (skipped ? " · " + skipped + " skipped (no last name)" : "") + (unresolvedDept ? " · " + unresolvedDept + " unmatched dept" : "") + (createdLoc ? " · " + createdLoc + " locations created" : "") + (unresolvedCo ? " · " + unresolvedCo + " company defaulted" : ""));
     await loadRefs(); renderSetup();
   } catch (e) { err(e); if (btn) { btn.disabled = false; btn.textContent = "Import"; } }
 }
