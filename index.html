@@ -308,7 +308,7 @@ function updateBrand() {
 }
 async function previewNumber(kind, companyId, dateStr, elId) {
   const el = $("#" + elId); if (!el) return;
-  if (!companyId) { el.textContent = "PO/PR number is generated automatically on save."; return; }
+  if (!companyId) { el.textContent = "A number is generated automatically on save — pick a company to preview it."; return; }
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
   const code = (c && c.code && c.code.trim()) ? c.code.trim().toUpperCase()
     : (c ? (c.name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "PO") : "PO");
