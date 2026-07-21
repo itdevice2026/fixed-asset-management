@@ -264,6 +264,10 @@ function companyLogoImg(companyId, px) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
   return (c && c.logo_url) ? '<img src="' + h(c.logo_url) + '" alt="" style="height:' + (px || 40) + 'px;max-width:180px;object-fit:contain;display:block;margin:0 0 10px">' : '';
 }
+function depMethodOpts(sel) {
+  const m = [["straight_line","Straight-line"],["declining_balance","Declining balance"],["units_of_production","Units of production"]];
+  return m.map(x => '<option value="' + x[0] + '"' + (sel === x[0] ? " selected" : "") + '>' + x[1] + '</option>').join("");
+}
 function updateBrand() {
   const b = $(".brand"); if (!b) return;
   const list = S.refs.companies || [];
@@ -277,9 +281,8 @@ async function previewNumber(kind, companyId, dateStr, elId) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
   const code = (c && c.code && c.code.trim()) ? c.code.trim().toUpperCase()
     : (c ? (c.name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "PO") : "PO");
-  const table = kind === "pr" ? "fam_purchase_requests" : "fam_purchase_orders";
-  const dcol = kind === "pr" ? "request_date" : "po_date";
-  const mid = kind === "pr" ? "PR" : "";
+  const map = { ar: {table:"fam_asset_requests", dcol:"request_date", mid:"AR"}, pr: {table:"fam_purchase_requests", dcol:"request_date", mid:"PR"}, po: {table:"fam_purchase_orders", dcol:"po_date", mid:""} };
+  const m = map[kind]; const table = m.table, dcol = m.dcol, mid = m.mid;
   const d = dateStr || today();
   const p = d.split("-");
   const mmddyyyy = (p[1] || "") + (p[2] || "") + (p[0] || "");
@@ -384,6 +387,7 @@ function renderUserBadge() {
 /* ================= NAV ================= */
 const VIEWS = [
   ["dashboard","Dashboard",()=>true],
+  ["arequests","Asset Requests",()=>true],
   ["requests","Purchase Requests",()=>true],
   ["pos","Purchase Orders",()=>true],
   ["assets","Assets",()=>true],
@@ -400,7 +404,7 @@ function renderNav() {
 async function go(v) {
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
-  const fn = { dashboard:vDashboard, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
+  const fn = { dashboard:vDashboard, arequests:vAssetRequests, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
     disposals:vDisposals, reports:vReports, setup:vSetup, users:vUsers }[v];
   try { await fn(); }
   catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Refresh and try again.</div>'; }
@@ -443,6 +447,122 @@ async function vDashboard() {
           recent.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
           '</tbody></table></div>' : '<div class="empty">No assets registered yet.</div>') + '</div>' +
     '</div>';
+}
+
+/* ================= ASSET REQUESTS (steps 1-2) ================= */
+const AR_STATUS = { pending:"pending", dept_approved:"dept approved", budget_approved:"budget approved", rejected:"rejected", converted:"converted" };
+let arItemN = 0;
+function arItemRow(it) {
+  it = it || {}; arItemN++;
+  return '<div class="itemrow" id="ari' + arItemN + '">' +
+    '<input placeholder="Item / asset needed" class="ari-desc" value="' + h(it.description || "") + '">' +
+    '<select class="ari-cat">' + opts(S.refs.categories, it.category_id, "Category…") + '</select>' +
+    '<input type="number" min="1" class="ari-qty" placeholder="Qty" value="' + (it.quantity || 1) + '">' +
+    '<input type="number" min="0" step="0.01" class="ari-cost" placeholder="Est. unit cost" value="' + (it.estimated_unit_cost != null ? it.estimated_unit_cost : "") + '">' +
+    '<button class="x" title="Remove" onclick="document.getElementById(\'ari' + arItemN + '\').remove()">&times;</button></div>';
+}
+function arPill(s) { return '<span class="pill ' + (s === "budget_approved" || s === "dept_approved" ? "approved" : s) + '">' + h(AR_STATUS[s] || s) + '</span>'; }
+async function vAssetRequests() {
+  const { data: ars, error } = await sb.from("fam_asset_requests")
+    .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
+    .order("request_date", {ascending:false}).order("id", {ascending:false});
+  if (error) throw error;
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Asset Requests</h2><p class="sub" style="margin:0">Step 1–2: requestor need → department head → budget approval → becomes a Purchase Requisition</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="arForm()">+ New asset request</button>' : '') + '</div>' +
+    '<div class="card">' + (ars.length ?
+      '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
+      ars.map(a => { const items = a.fam_ar_items || [];
+        const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+        const qty = items.reduce((s,i)=>s+i.quantity,0);
+        return '<tr class="click" onclick="arDetail(' + a.id + ')"><td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(tot) + '</td><td>' + arPill(a.status) + '</td></tr>'; }).join("") +
+      '</tbody></table></div>' : '<div class="empty">No asset requests yet.' + (P.prepare() ? ' Click "+ New asset request" to start the process.' : '') + '</div>') + '</div>';
+}
+function arForm() {
+  arItemN = 0;
+  openModal(mhead("New asset request") +
+    '<div class="frow"><div><label>Company</label>' + companyField("ar_company", defaultCompany()) + '</div>' +
+    '<div><label>Request date</label><input type="date" id="ar_date" value="' + today() + '"></div></div>' +
+    '<div id="ar_num_preview" class="note" style="margin-top:0"></div>' +
+    '<div class="frow"><div><label>Requested by</label><input id="ar_by" value="' + h(S.me.full_name || "") + '"></div>' +
+    '<div><label>Department</label><select id="ar_dept">' + opts(S.refs.departments, "", "—") + '</select></div></div>' +
+    '<label>Business need / purpose</label><input id="ar_purpose" placeholder="Why is this asset needed?">' +
+    '<label>Items needed</label><div id="arItems">' + arItemRow() + '</div>' +
+    '<button class="mini" onclick="document.getElementById(\'arItems\').insertAdjacentHTML(\'beforeend\', arItemRow())">+ Add line</button>' +
+    '<label>Notes</label><textarea id="ar_notes" rows="2"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="arSave()">Submit request</button></div>', true);
+  wirePreview("ar", "ar_company", "ar_date", "ar_num_preview");
+}
+async function arSave() {
+  const company_id = val("ar_company");
+  if (!company_id) return toast("Select a company", true);
+  const items = $$("#arItems .itemrow").map(r => ({
+    description: $(".ari-desc", r).value.trim(),
+    category_id: $(".ari-cat", r).value || null,
+    quantity: Number($(".ari-qty", r).value || 1),
+    estimated_unit_cost: Number($(".ari-cost", r).value || 0),
+  })).filter(i => i.description);
+  if (!items.length) return toast("Add at least one item", true);
+  try {
+    const { data: ar, error } = await sb.from("fam_asset_requests").insert({
+      company_id, request_date: val("ar_date") || today(), requested_by: val("ar_by") || null,
+      department_id: val("ar_dept") || null, purpose: val("ar_purpose") || null, notes: val("ar_notes") || null, status: "pending",
+    }).select().single();
+    if (error) throw error;
+    const { error: e2 } = await sb.from("fam_ar_items").insert(items.map(i => ({ ...i, ar_id: ar.id })));
+    if (e2) throw e2;
+    closeModal(); toast("Asset request " + (ar.ar_number || "") + " submitted"); vAssetRequests();
+  } catch (e) { err(e); }
+}
+async function arDetail(id) {
+  try {
+    const { data: ar, error } = await sb.from("fam_asset_requests").select("*, fam_companies(name), fam_departments(name), fam_ar_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const items = ar.fam_ar_items || [];
+    const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+    openModal(mhead("Asset request " + (ar.ar_number || "")) + companyLogoImg(ar.company_id) +
+      '<div class="kv"><div class="k">Company</div><div>' + h(ar.fam_companies?ar.fam_companies.name:"—") + '</div>' +
+      '<div class="k">Date</div><div>' + dstr(ar.request_date) + '</div>' +
+      '<div class="k">Requested by</div><div>' + h(ar.requested_by || "—") + '</div>' +
+      '<div class="k">Department</div><div>' + h(ar.fam_departments?ar.fam_departments.name:"—") + '</div>' +
+      '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
+      '<div class="k">Status</div><div>' + arPill(ar.status) + '</div>' +
+      (ar.dept_approved_at ? '<div class="k">Dept head approved</div><div>' + dstr(ar.dept_approved_at.slice(0,10)) + '</div>' : "") +
+      (ar.budget_approved_at ? '<div class="k">Budget approved</div><div>' + dstr(ar.budget_approved_at.slice(0,10)) + '</div>' : "") +
+      (ar.notes ? '<div class="k">Notes</div><div>' + h(ar.notes) + '</div>' : "") + '</div>' +
+      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
+      items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
+      '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
+      '<div class="mfoot">' +
+      (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
+      (ar.status === "dept_approved" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'budget_approved\')">Approve budget</button>' : "") +
+      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
+      '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function arSetStatus(id, status) {
+  try {
+    const { error } = await sb.from("fam_asset_requests").update({ status }).eq("id", id);
+    if (error) throw error;
+    toast("Request " + (AR_STATUS[status] || status)); arDetail(id); if (S.view === "arequests") vAssetRequests();
+  } catch (e) { err(e); }
+}
+async function arConvert(id) {
+  try {
+    const { data: ar, error } = await sb.from("fam_asset_requests").select("*, fam_ar_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const { data: pr, error: e1 } = await sb.from("fam_purchase_requests").insert({
+      company_id: ar.company_id, ar_id: ar.id, request_date: today(), requested_by: ar.requested_by,
+      department_id: ar.department_id, purpose: ar.purpose, status: "pending",
+      notes: "From asset request " + (ar.ar_number || ""),
+    }).select().single();
+    if (e1) throw e1;
+    const rows = (ar.fam_ar_items || []).map(i => ({ pr_id: pr.id, description: i.description, category_id: i.category_id, quantity: i.quantity, estimated_unit_cost: i.estimated_unit_cost }));
+    if (rows.length) { const { error: e2 } = await sb.from("fam_pr_items").insert(rows); if (e2) throw e2; }
+    const { error: e3 } = await sb.from("fam_asset_requests").update({ status: "converted" }).eq("id", id);
+    if (e3) throw e3;
+    closeModal(); toast("Purchase Requisition " + (pr.pr_number || "") + " created"); go("requests");
+  } catch (e) { err(e); }
 }
 
 /* ================= PURCHASE REQUESTS ================= */
@@ -510,12 +630,13 @@ async function prSave() {
 }
 async function prDetail(id) {
   try {
-    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_companies(name), fam_departments(name), fam_pr_items(*)").eq("id", id).single();
+    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_companies(name), fam_departments(name), fam_asset_requests(ar_number), fam_pr_items(*)").eq("id", id).single();
     if (error) throw error;
     const items = pr.fam_pr_items || [];
     const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
     openModal(mhead("Request " + (pr.pr_number || "")) + companyLogoImg(pr.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(pr.fam_companies?pr.fam_companies.name:"—") + '</div>' +
+      (pr.fam_asset_requests ? '<div class="k">From asset request</div><div>' + h(pr.fam_asset_requests.ar_number) + '</div>' : "") +
       '<div class="k">Date</div><div>' + dstr(pr.request_date) + '</div>' +
       '<div class="k">Requested by</div><div>' + h(pr.requested_by || "—") + '</div>' +
       '<div class="k">Department</div><div>' + h(pr.fam_departments?pr.fam_departments.name:"—") + '</div>' +
@@ -680,7 +801,9 @@ async function registerForm(poId, itemId) {
       '<div><label>Location</label><select id="r_loc">' + opts(S.refs.locations, "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Department</label><select id="r_dept">' + opts(S.refs.departments, "", "—") + '</select></div>' +
       '<div><label>Custodian</label><select id="r_cust">' + opts(S.refs.employees, "", "—") + '</select></div></div>' +
-      '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…).</div>' +
+      '<div class="frow"><div><label>Cost center</label><input id="r_costcenter" placeholder="e.g. Admin-101"></div>' +
+      '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
+      '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…). Depreciation is auto-computed straight-line.</div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
   } catch (e) { err(e); }
 }
@@ -696,6 +819,7 @@ async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
     salvage_value: Number(val("r_salvage") || 0),
     useful_life_months: Number(val("r_life") || 60),
     location_id: val("r_loc") || null, department_id: val("r_dept") || null, custodian_id: val("r_cust") || null,
+    cost_center: val("r_costcenter") || null, depreciation_method: val("r_depmethod") || "straight_line",
   });
   try {
     const { error } = await sb.from("fam_assets").insert(rows);
@@ -748,7 +872,8 @@ async function assetDetail(id) {
       '<div class="k">Supplier</div><div>' + h(r.supplier_name || "—") + '</div>' +
       '<div class="k">Serial / Model</div><div>' + h(r.serial_number || "—") + " / " + h(r.model || "—") + '</div>' +
       '<div class="k">Acquired</div><div>' + dstr(r.acquisition_date) + " · " + fmt(r.acquisition_cost) + '</div>' +
-      '<div class="k">Depreciation</div><div>' + fmt(r.monthly_depreciation) + '/mo · ' + r.months_depreciated + ' of ' + r.useful_life_months + ' months (' + pct + '%)</div>' +
+      '<div class="k">Cost center</div><div>' + h(r.cost_center || "—") + '</div>' +
+      '<div class="k">Depreciation</div><div>' + fmt(r.monthly_depreciation) + '/mo · ' + h((r.depreciation_method || "straight_line").replace(/_/g," ")) + ' · ' + r.months_depreciated + ' of ' + r.useful_life_months + ' months (' + pct + '%)</div>' +
       '<div class="k">Accum. dep.</div><div>' + fmt(r.accumulated_depreciation) + '</div>' +
       '<div class="k">Net book value</div><div><strong>' + fmt(r.net_book_value) + '</strong></div>' +
       '<div class="k">Location</div><div>' + h(r.location_name || "—") + '</div>' +
@@ -775,6 +900,8 @@ async function assetForm(id) {
     '<div><label>Acquisition cost</label><input type="number" step="0.01" id="a_cost" value="' + (a.acquisition_cost != null ? a.acquisition_cost : "") + '"></div></div>' +
     '<div class="frow"><div><label>Useful life (months)</label><input type="number" id="a_life" value="' + (a.useful_life_months || 60) + '"></div>' +
     '<div><label>Salvage value</label><input type="number" step="0.01" id="a_salvage" value="' + (a.salvage_value != null ? a.salvage_value : 0) + '"></div></div>' +
+    '<div class="frow"><div><label>Cost center</label><input id="a_costcenter" value="' + h(a.cost_center || "") + '"></div>' +
+    '<div><label>Depreciation method</label><select id="a_depmethod">' + depMethodOpts(a.depreciation_method || "straight_line") + '</select></div></div>' +
     '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(S.refs.suppliers, a.supplier_id, "—") + '</select></div>' +
@@ -800,6 +927,7 @@ async function assetSave(id) {
     serial_number: val("a_serial") || null, model: val("a_model") || null,
     supplier_id: val("a_supplier") || null, status: val("a_status"),
     location_id: val("a_loc") || null, department_id: val("a_dept") || null, custodian_id: val("a_cust") || null,
+    cost_center: val("a_costcenter") || null, depreciation_method: val("a_depmethod") || "straight_line",
     notes: val("a_notes") || null,
   };
   if (!row.name) return toast("Asset name is required", true);
