@@ -260,6 +260,17 @@ function defaultCompany() {
   if (S.me && S.me.company_id && list.some(c => String(c.id) === String(S.me.company_id))) return S.me.company_id;
   return list.length === 1 ? list[0].id : "";
 }
+function companyLogoImg(companyId, px) {
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
+  return (c && c.logo_url) ? '<img src="' + h(c.logo_url) + '" alt="" style="height:' + (px || 40) + 'px;max-width:180px;object-fit:contain;display:block;margin:0 0 10px">' : '';
+}
+function updateBrand() {
+  const b = $(".brand"); if (!b) return;
+  const list = S.refs.companies || [];
+  const one = list.length === 1 ? list[0] : null;
+  if (one && one.logo_url) b.innerHTML = '<img src="' + h(one.logo_url) + '" alt="" style="height:24px;max-width:130px;object-fit:contain;vertical-align:middle"> <small>' + h(one.name) + '</small>';
+  else b.innerHTML = 'Fixed Assets<small>All Company</small>';
+}
 async function previewNumber(kind, companyId, dateStr, elId) {
   const el = $("#" + elId); if (!el) return;
   if (!companyId) { el.textContent = "PO/PR number is generated automatically on save."; return; }
@@ -357,6 +368,7 @@ async function loadMe() {
     hideAuth();
     await loadRefs();
     S.me.company_name = ((S.refs.companies || []).find(c => String(c.id) === String(prof.company_id)) || {}).name || null;
+    updateBrand();
     renderUserBadge(); renderNav(); go("dashboard");
   } catch (e) { err(e); loginScreen("Could not load your profile — please try again."); }
 }
@@ -502,7 +514,7 @@ async function prDetail(id) {
     if (error) throw error;
     const items = pr.fam_pr_items || [];
     const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
-    openModal(mhead("Request " + (pr.pr_number || "")) +
+    openModal(mhead("Request " + (pr.pr_number || "")) + companyLogoImg(pr.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(pr.fam_companies?pr.fam_companies.name:"—") + '</div>' +
       '<div class="k">Date</div><div>' + dstr(pr.request_date) + '</div>' +
       '<div class="k">Requested by</div><div>' + h(pr.requested_by || "—") + '</div>' +
@@ -623,7 +635,7 @@ async function poDetail(id) {
     (assets || []).forEach(a => regByItem[a.po_item_id] = (regByItem[a.po_item_id] || 0) + 1);
     const items = po.fam_po_items || [];
     const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
-    openModal(mhead("PO " + (po.po_number || "")) +
+    openModal(mhead("PO " + (po.po_number || "")) + companyLogoImg(po.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies?po.fam_companies.name:"—") + '</div>' +
       (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + h(po.fam_purchase_requests.pr_number) + '</div>' : "") +
       '<div class="k">Supplier</div><div>' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + '</div>' +
@@ -1014,7 +1026,7 @@ function expSummary(label) {
 /* ================= SETUP ================= */
 const SETUP = {
   companies: { title: "Companies", table: "fam_companies", adminOnly: true, fields: [
-    {k:"name",l:"Company name",req:1},{k:"code",l:"Code (PO/PR prefix)"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
+    {k:"name",l:"Company name",req:1},{k:"code",l:"Code (PO/PR prefix)"},{k:"logo_url",l:"Logo",type:"image"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   suppliers: { title: "Suppliers", table: "fam_suppliers", fields: [
     {k:"name",l:"Name",req:1},{k:"contact_person",l:"Contact person"},{k:"phone",l:"Phone"},{k:"email",l:"Email"},{k:"address",l:"Address"},{k:"tin",l:"TIN"}]},
   categories: { title: "Asset categories", table: "fam_categories", fields: [
@@ -1037,12 +1049,14 @@ function renderSetupTabs() {
 async function renderSetup() {
   const cfg = SETUP[S.setupTab];
   await loadRefs();
+  updateBrand();
   const rows = S.refs[S.setupTab] || [];
   $("#sbody").innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">' + cfg.title + '</h3><div class="sp"></div>' +
     (P.ref() ? '<button class="btn" onclick="setupForm()">+ Add</button>' : '') + '</div>' +
     (rows.length ? '<div class="scroll"><table><thead><tr>' + cfg.fields.map(f => '<th>' + f.l + '</th>').join("") + '<th></th></tr></thead><tbody>' +
     rows.map(r => '<tr>' + cfg.fields.map(f => {
       let v = r[f.k];
+      if (f.type === "image") return '<td>' + (v ? '<img src="' + h(v) + '" alt="" style="height:30px;max-width:120px;object-fit:contain;background:#fff;border-radius:4px;border:1px solid var(--grid)">' : '—') + '</td>';
       if (f.type === "ref") v = refName(S.refs[f.ref], v);
       if (f.type === "bool") v = v ? "Yes" : "No";
       return '<td>' + h(v == null ? "—" : v) + '</td>'; }).join("") +
@@ -1057,9 +1071,40 @@ function setupForm(id) {
       const v = r[f.k] != null ? r[f.k] : (f.def != null ? f.def : "");
       if (f.type === "ref") return '<label>' + f.l + '</label><select id="s_' + f.k + '">' + opts(S.refs[f.ref], v, "—") + '</select>';
       if (f.type === "bool") return '<label>' + f.l + '</label><select id="s_' + f.k + '"><option value="true"' + (v ? " selected" : "") + '>Yes</option><option value="false"' + (!v ? " selected" : "") + '>No</option></select>';
+      if (f.type === "image") return '<label>' + f.l + '</label>' +
+        '<div id="s_' + f.k + '_prev" style="margin-bottom:6px">' + (v ? '<img src="' + h(v) + '" alt="" style="max-height:64px;border:1px solid var(--grid);border-radius:8px;padding:4px;background:#fff">' : '<span class="note">No logo yet</span>') + '</div>' +
+        '<input type="hidden" id="s_' + f.k + '" value="' + h(v) + '">' +
+        '<input type="file" accept="image/*" style="width:auto" onchange="logoPick(this,\'s_' + f.k + '\')">' +
+        (v ? ' <button class="mini danger" type="button" onclick="logoClear(\'s_' + f.k + '\')">Remove</button>' : '') +
+        '<div class="note">PNG or JPG — auto-resized. A transparent PNG looks best.</div>';
       return '<label>' + f.l + (f.req ? " *" : "") + '</label><input id="s_' + f.k + '" type="' + (f.type || "text") + '" value="' + h(v) + '">';
     }).join("") +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="setupSave(' + (id || "null") + ')">Save</button></div>');
+}
+function logoPick(input, hid) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) { toast("Image too large (max 4MB)", true); input.value = ""; return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 260, scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale), ht = Math.round(img.height * scale);
+      const cv = document.createElement("canvas"); cv.width = w; cv.height = ht;
+      cv.getContext("2d").drawImage(img, 0, 0, w, ht);
+      let url; try { url = cv.toDataURL("image/png"); } catch (e) { url = rd.result; }
+      const hidEl = $("#" + hid); if (hidEl) hidEl.value = url;
+      const prev = $("#" + hid + "_prev"); if (prev) prev.innerHTML = '<img src="' + url + '" alt="" style="max-height:64px;border:1px solid var(--grid);border-radius:8px;padding:4px;background:#fff">';
+    };
+    img.onerror = () => toast("Could not read that image", true);
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
+function logoClear(hid) {
+  const hidEl = $("#" + hid); if (hidEl) hidEl.value = "";
+  const prev = $("#" + hid + "_prev"); if (prev) prev.innerHTML = '<span class="note">No logo yet</span>';
 }
 async function setupSave(id) {
   const cfg = SETUP[S.setupTab];
