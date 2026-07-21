@@ -243,13 +243,18 @@ function myrank() { return (S.me && RANK[S.me.role]) || 0; }
 const P = { view:()=>myrank()>=1, ref:()=>myrank()>=2, prepare:()=>myrank()>=3, approve:()=>myrank()>=4, admin:()=>myrank()>=5 };
 function isAdmin() { return S.me && S.me.role === "admin"; }
 /* company field: admin picks; scoped user is fixed to their company */
+function multiCompany() { return (S.refs.companies || []).length > 1; }
 function companyField(id, selected) {
-  if (isAdmin()) return '<select id="' + id + '">' + opts(S.refs.companies, selected, "Select company…") + '</select>';
+  if (multiCompany()) return '<select id="' + id + '">' + opts(S.refs.companies, selected, "Select company…") + '</select>';
   const c = (S.refs.companies || [])[0];
   return '<input value="' + h(c ? c.name : "(no company assigned)") + '" disabled>' +
          '<input type="hidden" id="' + id + '" value="' + (c ? c.id : "") + '">';
 }
-function defaultCompany() { return isAdmin() ? "" : ((S.refs.companies || [])[0] || {}).id || ""; }
+function defaultCompany() {
+  const list = S.refs.companies || [];
+  if (S.me && S.me.company_id && list.some(c => String(c.id) === String(S.me.company_id))) return S.me.company_id;
+  return list.length === 1 ? list[0].id : "";
+}
 
 /* ================= STATE ================= */
 const S = { me: null, refs: {}, view: "dashboard", reportTab: "register", setupTab: "companies",
@@ -363,7 +368,7 @@ async function go(v) {
 /* ================= DASHBOARD ================= */
 async function vDashboard() {
   let reg = await fetchRegister();
-  const co = isAdmin() ? (S.dashCompany || "") : "";
+  const co = multiCompany() ? (S.dashCompany || "") : "";
   if (co) reg = reg.filter(r => String(r.company_id) === String(co));
   const act = reg.filter(r => r.status !== "disposed");
   const sum = (a, f) => a.reduce((t, r) => t + Number(r[f] || 0), 0);
@@ -380,7 +385,7 @@ async function vDashboard() {
 
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Dashboard</h2><p class="sub" style="margin:0">Fixed asset position as of ' + dstr(today()) + '</p></div><div class="sp"></div>' +
-    (isAdmin() ? '<select style="max-width:230px" onchange="S.dashCompany=this.value;vDashboard()">' + opts(S.refs.companies, co, "All companies") + '</select>' : '') + '</div>' +
+    (multiCompany() ? '<select style="max-width:230px" onchange="S.dashCompany=this.value;vDashboard()">' + opts(S.refs.companies, co, "All companies") + '</select>' : '') + '</div>' +
     '<div class="grid tiles">' +
       '<div class="card tile"><div class="lbl">Active assets</div><div class="val">' + act.length + '</div><div class="sub2">' + disposed + ' disposed</div></div>' +
       '<div class="card tile"><div class="lbl">Acquisition cost</div><div class="val">' + fmtC(cost) + '</div><div class="sub2">' + fmt(cost) + '</div></div>' +
@@ -665,7 +670,7 @@ async function vAssets() {
     '<div class="bar"><div><h2>Assets</h2><p class="sub" style="margin:0">Asset register with live depreciation</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + '</div>' +
     '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:240px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
-    (isAdmin() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
+    (multiCompany() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
     '<select style="max-width:150px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
     ["active","under_repair","disposed","lost"].map(s => '<option value="' + s + '"' + (f.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select>' +
     '<select style="max-width:190px" onchange="S.assetFilter.cat=this.value;renderAssetTable()">' + opts(S.refs.categories, f.cat, "All categories") + '</select></div>' +
@@ -1090,7 +1095,7 @@ function renderUsers() {
     rows.map(u => {
       const access = !u.has_access ? '<span style="color:var(--ink-3)">no access</span>'
         : '<span class="rolechip">' + h(u.role) + '</span>' + (u.active === false ? ' ' + pill("rejected").replace("rejected","inactive") : "");
-      const comp = u.role === "admin" ? "All" : (u.company_name || (u.has_access ? "—" : ""));
+      const comp = u.role === "admin" ? "All" : ((u.company_names && u.company_names.length) ? u.company_names.join(", ") : (u.has_access ? "—" : ""));
       const enc = JSON.stringify(u).replace(/'/g, "&#39;");
       const actions = u.has_access
         ? '<button class="mini" onclick=\'userForm(' + enc + ')\'>Edit</button> ' + (u.id === S.me.id ? '' : '<button class="mini danger" onclick="userRevoke(\'' + u.id + '\')">Remove access</button>')
@@ -1105,27 +1110,40 @@ function userForm(u) {
   const existing = !!(u && u.id);           // account already exists in the system
   const granting = existing && !u.has_access;
   const title = !u ? "New account" : (granting ? "Grant access" : "Edit user");
+  const cids = (u && u.company_ids) || [];
+  const checks = (S.refs.companies || []).map(c =>
+    '<label style="display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0;font-weight:400"><input type="checkbox" class="u_co" value="' + c.id + '"' + (cids.map(String).includes(String(c.id)) ? " checked" : "") + ' style="width:auto"> ' + h(c.name) + '</label>').join("");
   openModal(mhead(title) +
     '<div class="frow"><div><label>Full name</label><input id="u_name" value="' + h(u ? (u.full_name || "") : "") + '"></div>' +
     '<div><label>Email</label><input id="u_email" type="email" value="' + h(u ? (u.email || "") : "") + '"' + (existing ? " disabled" : "") + '></div></div>' +
-    '<div class="frow"><div><label>Role</label><select id="u_role">' + ROLE_LIST.map(r => '<option value="' + r + '"' + ((u && u.role === r) || (!(u && u.role) && r === "viewer") ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
-    '<div><label>Company (blank = all, admins only)</label><select id="u_company">' + opts(S.refs.companies, u ? u.company_id : "", "All companies") + '</select></div></div>' +
+    '<div class="frow"><div><label>Role</label><select id="u_role" onchange="userRoleChange()">' + ROLE_LIST.map(r => '<option value="' + r + '"' + ((u && u.role === r) || (!(u && u.role) && r === "viewer") ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
+    '<div>' + (existing && u.has_access ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') + '</div></div>' +
+    '<div id="u_companies_wrap"><label>Companies (tick one or more)</label><div id="u_companies" style="border:1px solid var(--grid);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto">' + (checks || '<span class="note">No companies yet — add them under Setup.</span>') + '</div></div>' +
+    '<div id="u_admin_note" class="note" style="display:none">Admins have access to all companies automatically.</div>' +
     '<label>' + (existing ? "Reset password (leave blank to keep theirs)" : "Temporary password") + '</label><input id="u_pw" type="text" placeholder="' + (existing ? "unchanged" : "at least 6 characters") + '">' +
-    (existing && u.has_access ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') +
-    '<div class="note">' + (granting ? "This account already exists — you are giving it Fixed Assets access. " : "") + 'Non-admins only see their assigned company; admins see all.</div>' +
+    '<div class="note">' + (granting ? "This account already exists — you are giving it Fixed Assets access. " : "") + 'Non-admins only see the companies you tick.</div>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="userSave(' + (existing ? "'" + u.id + "'" : "null") + ')">' + (granting ? "Grant access" : "Save") + '</button></div>');
+  userRoleChange();
+}
+function userRoleChange() {
+  const admin = val("u_role") === "admin";
+  const wrap = $("#u_companies_wrap"), note = $("#u_admin_note");
+  if (wrap) wrap.style.display = admin ? "none" : "";
+  if (note) note.style.display = admin ? "" : "none";
 }
 async function userSave(id) {
-  const role = val("u_role"), company_id = val("u_company") || null, full_name = val("u_name"), pw = val("u_pw"), email = val("u_email");
+  const role = val("u_role"), full_name = val("u_name"), pw = val("u_pw"), email = val("u_email");
+  const company_ids = role === "admin" ? [] : $$(".u_co:checked").map(x => Number(x.value));
+  if (role !== "admin" && company_ids.length === 0) return toast("Tick at least one company for this user", true);
   try {
     if (id) {
-      const payload = { action: "update_user", id, email, role, company_id, full_name, password: pw || undefined };
-      if ($("#u_active")) payload.active = val("u_active") === "true"; else payload.active = true;
+      const payload = { action: "update_user", id, email, role, company_ids, full_name, password: pw || undefined };
+      payload.active = $("#u_active") ? (val("u_active") === "true") : true;
       await callAdmin(payload);
     } else {
       if (!email) return toast("Email is required", true);
       if (pw.length < 6) return toast("Password must be at least 6 characters", true);
-      await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_id });
+      await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_ids });
     }
     closeModal(); toast("Saved"); vUsers();
   } catch (e) { err(e); }
