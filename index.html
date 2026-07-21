@@ -980,6 +980,7 @@ async function assetDetail(id) {
       '<div class="k">Cost center</div><div>' + h(r.cost_center || "—") + '</div>' +
       '<div class="k">Depreciation</div><div>' + fmt(r.monthly_depreciation) + '/mo · ' + h((r.depreciation_method || "straight_line").replace(/_/g," ")) + ' · ' + r.months_depreciated + ' of ' + r.useful_life_months + ' months (' + pct + '%)</div>' +
       '<div class="k">Accum. dep.</div><div>' + fmt(r.accumulated_depreciation) + '</div>' +
+      (Number(r.accumulated_impairment) > 0 ? '<div class="k">Accum. impairment</div><div style="color:var(--critical)">' + fmt(r.accumulated_impairment) + '</div>' : "") +
       '<div class="k">Net book value</div><div><strong>' + fmt(r.net_book_value) + '</strong></div>' +
       '<div class="k">Location</div><div>' + h(r.location_name || "—") + '</div>' +
       '<div class="k">Department</div><div>' + h(r.department_name || "—") + '</div>' +
@@ -989,6 +990,8 @@ async function assetDetail(id) {
       '</div><div class="mfoot">' +
       '<button class="btn2" onclick="printAssetTag()">Print tag</button><button class="btn2" onclick="printAccountability()">Accountability form</button>' +
       '<button class="btn2" onclick="maintLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Maintenance log</button>' +
+      '<button class="btn2" onclick="impairLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Impairment / review</button>' +
+      '<button class="btn2" onclick="docList(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Documents</button>' +
       (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>');
   } catch (e) { err(e); }
@@ -1157,7 +1160,7 @@ function depAtDate(r, dateStr) {
   const start = r.dep_start || r.depreciation_start || r.acquisition_date;
   const m = Math.min(r.useful_life_months, monthsFull(start, dateStr));
   const acc = Math.round((r.acquisition_cost - r.salvage_value) * m / r.useful_life_months * 100) / 100;
-  return Math.round((r.acquisition_cost - acc) * 100) / 100;
+  return Math.round((r.acquisition_cost - acc - Number(r.accumulated_impairment || 0)) * 100) / 100;
 }
 async function disposeSave() {
   const assetId = val("d_asset");
@@ -1187,10 +1190,11 @@ async function disposeApprove(id, status) {
 /* ================= REPORTS ================= */
 async function vReports() {
   REG_CACHE = await fetchRegister();
+  try { const { data } = await sb.from("fam_disposals").select("*"); window._allDisposals = data || []; } catch (e) { window._allDisposals = []; }
   $("#main").innerHTML = '<h2>Reports</h2><p class="sub">Straight-line depreciation · scoped to your access</p><div class="tabs2" id="rtabs"></div><div id="rbody"></div>';
   renderReportTabs(); renderReport();
 }
-const RTABS = { register: "Asset register", lapsing: "Depreciation schedule", com: "By company", cat: "By category", dept: "By department", loc: "By location" };
+const RTABS = { register: "Asset register", lapsing: "Depreciation schedule", journal: "GL journal", com: "By company", cat: "By category", dept: "By department", loc: "By location" };
 function renderReportTabs() {
   $("#rtabs").innerHTML = Object.keys(RTABS).map(k =>
     '<button class="' + (S.reportTab === k ? "on" : "") + '" onclick="S.reportTab=\'' + k + '\';renderReportTabs();renderReport()">' + RTABS[k] + '</button>').join("");
@@ -1219,6 +1223,8 @@ function renderReport() {
       calc.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + ' <span style="color:var(--ink-3)">· ' + h(r.company_name || "—") + '</span></td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.y_start) + '</td><td class="num">' + fmt(r.y_dep) + '</td><td class="num">' + fmt(r.y_end) + '</td><td class="num">' + fmt(r.y_nbv) + '</td></tr>').join("") +
       '</tbody><tfoot><tr><td colspan="2"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot("acquisition_cost")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_start")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_dep")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_end")) + '</strong></td><td class="num"><strong>' + fmt(tot("y_nbv")) + '</strong></td></tr></tfoot></table></div>' : '<div class="empty">No assets depreciating in ' + y + '.</div>') + '</div>';
     window._lapsing = calc;
+  } else if (S.reportTab === "journal") {
+    renderJournal();
   } else {
     const keyMap = { com: "company_name", cat: "category_name", dept: "department_name", loc: "location_name" };
     const label = { com: "Company", cat: "Category", dept: "Department", loc: "Location" }[S.reportTab];
@@ -1241,7 +1247,7 @@ function expRegister() {
     {label:"Asset Code",get:"asset_code"},{label:"Name",get:"name"},{label:"Company",get:"company_name"},{label:"Category",get:"category_name"},{label:"PO Number",get:"po_number"},
     {label:"Supplier",get:"supplier_name"},{label:"Serial",get:"serial_number"},{label:"Acquisition Date",get:"acquisition_date"},{label:"Useful Life (months)",get:"useful_life_months"},
     {label:"Cost",get:"acquisition_cost"},{label:"Salvage",get:"salvage_value"},{label:"Monthly Depreciation",get:"monthly_depreciation"},
-    {label:"Accumulated Depreciation",get:"accumulated_depreciation"},{label:"Net Book Value",get:"net_book_value"},
+    {label:"Accumulated Depreciation",get:"accumulated_depreciation"},{label:"Accumulated Impairment",get:"accumulated_impairment"},{label:"Net Book Value",get:"net_book_value"},
     {label:"Location",get:"location_name"},{label:"Department",get:"department_name"},{label:"Custodian",get:"custodian_name"},{label:"Status",get:"status"},
   ], REG_CACHE);
 }
@@ -1257,6 +1263,71 @@ function expSummary(label) {
     {label:label,get:"group"},{label:"Assets",get:"n"},{label:"Cost",get:"cost"},{label:"Accumulated Depreciation",get:"acc"},{label:"Net Book Value",get:"nbv"},
   ], window._summary || []);
 }
+/* ===== GL journal (control #5: FAR → GL) ===== */
+function monthBounds(period) {
+  const start = period + "-01";
+  const d = new Date(period + "-01T00:00:00"); d.setMonth(d.getMonth() + 1); d.setDate(0);
+  const end = period + "-" + String(d.getDate()).padStart(2, "0");
+  const p = new Date(period + "-01T00:00:00"); p.setDate(0);
+  const priorEnd = p.getFullYear() + "-" + String(p.getMonth() + 1).padStart(2, "0") + "-" + String(p.getDate()).padStart(2, "0");
+  return { start, end, priorEnd };
+}
+function genDepJournal(period) {
+  const { end, priorEnd } = monthBounds(period);
+  const lines = [];
+  REG_CACHE.forEach(r => {
+    const before = depAt(r, priorEnd), after = depAt(r, end);
+    const amt = Math.round((after - before) * 100) / 100;
+    if (amt <= 0) return;
+    lines.push({ date: end, account: "Depreciation Expense", asset_code: r.asset_code, asset: r.name, company: r.company_name || "", debit: amt, credit: 0, memo: "Monthly depreciation" });
+    lines.push({ date: end, account: "Accumulated Depreciation", asset_code: r.asset_code, asset: r.name, company: r.company_name || "", debit: 0, credit: amt, memo: "Monthly depreciation" });
+  });
+  return lines;
+}
+function genDispJournal(period) {
+  const { start, end } = monthBounds(period);
+  const costOf = {}; REG_CACHE.forEach(r => costOf[r.id] = r);
+  const lines = [];
+  (window._allDisposals || []).filter(d => d.approval_status === "approved" && d.disposal_date >= start && d.disposal_date <= end).forEach(d => {
+    const a = costOf[d.asset_id] || {}; const code = a.asset_code || ("#" + d.asset_id); const nm = a.name || "";
+    const cost = Number(a.acquisition_cost || 0), bv = Number(d.book_value_at_disposal || 0), proceeds = Number(d.proceeds || 0), gl = Number(d.gain_loss || 0);
+    const accdep = Math.round((cost - bv) * 100) / 100;
+    if (proceeds) lines.push({ date: d.disposal_date, account: "Cash / Proceeds", asset_code: code, asset: nm, company: a.company_name || "", debit: proceeds, credit: 0, memo: "Disposal (" + d.method + ")" });
+    if (accdep) lines.push({ date: d.disposal_date, account: "Accumulated Depreciation", asset_code: code, asset: nm, company: a.company_name || "", debit: accdep, credit: 0, memo: "Remove accumulated depreciation" });
+    if (gl < 0) lines.push({ date: d.disposal_date, account: "Loss on Disposal", asset_code: code, asset: nm, company: a.company_name || "", debit: Math.round(-gl * 100) / 100, credit: 0, memo: "Loss on disposal" });
+    lines.push({ date: d.disposal_date, account: "Fixed Asset (cost)", asset_code: code, asset: nm, company: a.company_name || "", debit: 0, credit: cost, memo: "Remove asset cost" });
+    if (gl > 0) lines.push({ date: d.disposal_date, account: "Gain on Disposal", asset_code: code, asset: nm, company: a.company_name || "", debit: 0, credit: Math.round(gl * 100) / 100, memo: "Gain on disposal" });
+  });
+  return lines;
+}
+function jrnTable(lines) {
+  const dr = lines.reduce((s, l) => s + l.debit, 0), cr = lines.reduce((s, l) => s + l.credit, 0);
+  if (!lines.length) return '<div class="empty">No entries for this period.</div>';
+  return '<div class="scroll"><table><thead><tr><th>Date</th><th>Account</th><th>Asset</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>' +
+    lines.map(l => '<tr><td>' + dstr(l.date) + '</td><td>' + h(l.account) + '</td><td>' + h(l.asset_code) + ' <span style="color:var(--ink-3)">' + h(l.asset) + '</span></td><td class="num">' + (l.debit ? fmt(l.debit) : "") + '</td><td class="num">' + (l.credit ? fmt(l.credit) : "") + '</td></tr>').join("") +
+    '</tbody><tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>' + fmt(dr) + '</strong></td><td class="num"><strong>' + fmt(cr) + '</strong></td></tr></tfoot></table></div>';
+}
+function renderJournal() {
+  const b = $("#rbody");
+  const period = S.jrnMonth || today().slice(0, 7);
+  S.jrnMonth = period;
+  const dep = genDepJournal(period), disp = genDispJournal(period);
+  window._jrnDep = dep; window._jrnDisp = disp;
+  b.innerHTML =
+    '<div class="card"><div class="bar"><h3 style="margin:0">GL journal</h3>' +
+    '<input type="month" style="max-width:170px" value="' + period + '" onchange="S.jrnMonth=this.value;renderReport()">' +
+    '<div class="sp"></div></div>' +
+    '<p class="sub" style="margin:0">Depreciation and disposal entries for posting to the general ledger (control #5: FAR → GL).</p></div>' +
+    '<div class="card"><div class="bar"><h3 style="margin:0">Depreciation journal — ' + period + '</h3><div class="sp"></div><button class="btn2" onclick="expJournal(\'dep\')">Export CSV</button></div>' + jrnTable(dep) + '</div>' +
+    '<div class="card"><div class="bar"><h3 style="margin:0">Disposal journal — ' + period + '</h3><div class="sp"></div><button class="btn2" onclick="expJournal(\'disp\')">Export CSV</button></div>' + jrnTable(disp) + '</div>';
+}
+function expJournal(which) {
+  const rows = which === "dep" ? (window._jrnDep || []) : (window._jrnDisp || []);
+  downloadCSV((which === "dep" ? "depreciation_journal_" : "disposal_journal_") + (S.jrnMonth || "") + ".csv", [
+    {label:"Date",get:"date"},{label:"Account",get:"account"},{label:"Asset Code",get:"asset_code"},{label:"Asset",get:"asset"},{label:"Company",get:"company"},
+    {label:"Debit",get:"debit"},{label:"Credit",get:"credit"},{label:"Memo",get:"memo"},
+  ], rows);
+}
 
 /* ================= SETUP ================= */
 const SETUP = {
@@ -1268,9 +1339,14 @@ const SETUP = {
     {k:"name",l:"Name",req:1},{k:"useful_life_months",l:"Useful life (months)",type:"number",req:1,def:60},{k:"salvage_rate",l:"Salvage rate (%)",type:"number",def:0}]},
   departments: { title: "Departments", table: "fam_departments", fields: [{k:"name",l:"Name",req:1}]},
   locations: { title: "Locations / branches", table: "fam_locations", fields: [{k:"name",l:"Name",req:1},{k:"address",l:"Address"}]},
-  employees: { title: "Employees", table: "fam_employees", fields: [
-    {k:"name",l:"Name",req:1},{k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool",def:true}]},
+  employees: { title: "Employees", table: "fam_employees", bulk: true, fields: [
+    {k:"employee_id",l:"Employee ID"},{k:"last_name",l:"Last name",req:1},{k:"first_name",l:"First name"},{k:"middle_name",l:"Middle name"},
+    {k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool",def:true}],
+    listFields: [
+    {k:"employee_id",l:"Employee ID"},{k:"name",l:"Full name (Last, First Middle)"},{k:"position",l:"Position"},
+    {k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool"}]},
 };
+function composeName(l, f, m) { l = (l||"").trim(); f = (f||"").trim(); m = (m||"").trim(); let n = l; if (f) n += (l ? ", " : "") + f; if (m) n += " " + m; return n.trim(); }
 function setupKeys() { return Object.keys(SETUP).filter(k => !SETUP[k].adminOnly || isAdmin()); }
 async function vSetup() {
   if (!setupKeys().includes(S.setupTab)) S.setupTab = setupKeys()[0];
@@ -1286,10 +1362,12 @@ async function renderSetup() {
   await loadRefs();
   updateBrand();
   const rows = S.refs[S.setupTab] || [];
+  const listFields = cfg.listFields || cfg.fields;
   $("#sbody").innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">' + cfg.title + '</h3><div class="sp"></div>' +
+    (cfg.bulk && P.ref() ? '<button class="btn2" onclick="bulkForm()">Upload CSV</button> ' : '') +
     (P.ref() ? '<button class="btn" onclick="setupForm()">+ Add</button>' : '') + '</div>' +
-    (rows.length ? '<div class="scroll"><table><thead><tr>' + cfg.fields.map(f => '<th>' + f.l + '</th>').join("") + '<th></th></tr></thead><tbody>' +
-    rows.map(r => '<tr>' + cfg.fields.map(f => {
+    (rows.length ? '<div class="scroll"><table><thead><tr>' + listFields.map(f => '<th>' + f.l + '</th>').join("") + '<th></th></tr></thead><tbody>' +
+    rows.map(r => '<tr>' + listFields.map(f => {
       let v = r[f.k];
       if (f.type === "image") return '<td>' + (v ? '<img src="' + h(v) + '" alt="" style="height:30px;max-width:120px;object-fit:contain;background:#fff;border-radius:4px;border:1px solid var(--grid)">' : '—') + '</td>';
       if (f.type === "ref") v = refName(S.refs[f.ref], v);
@@ -1301,6 +1379,12 @@ async function renderSetup() {
 function setupForm(id) {
   const cfg = SETUP[S.setupTab];
   const r = id ? (S.refs[S.setupTab] || []).find(x => x.id === id) : {};
+  if (cfg.table === "fam_employees" && r && r.name && !r.last_name && !r.first_name) {
+    const parts = String(r.name).split(",");
+    r.last_name = (parts[0] || "").trim();
+    const rest = (parts.slice(1).join(",")).trim().split(/\s+/).filter(Boolean);
+    r.first_name = rest.shift() || ""; r.middle_name = rest.join(" ");
+  }
   openModal(mhead((id ? "Edit " : "Add ") + cfg.title.toLowerCase().replace(/s$/, "")) +
     cfg.fields.map(f => {
       const v = r[f.k] != null ? r[f.k] : (f.def != null ? f.def : "");
@@ -1352,6 +1436,10 @@ async function setupSave(id) {
     if (f.type === "ref") v = v || null;
     row[f.k] = v === "" ? null : v;
   }
+  if (cfg.table === "fam_employees") {
+    row.name = composeName(val("s_last_name"), val("s_first_name"), val("s_middle_name"));
+    if (!row.name) return toast("Last name is required", true);
+  }
   try {
     const q = id ? sb.from(cfg.table).update(row).eq("id", id) : sb.from(cfg.table).insert(row);
     const { error } = await q;
@@ -1369,6 +1457,91 @@ async function setupDelete(id) {
     if (e && e.code === "23503") toast("Cannot delete — it is used by existing records", true);
     else err(e);
   }
+}
+/* ===== Bulk employee upload ===== */
+function bulkForm() {
+  if (!P.ref()) return toast("You don't have permission to import", true);
+  openModal(mhead("Upload employees (CSV)") +
+    '<p class="sub" style="margin:0 0 10px">Import many employees at once. Your CSV needs a header row with these columns (order does not matter):</p>' +
+    '<div class="kv" style="margin-bottom:12px"><div class="k">Employee ID</div><div>optional — unique code; re-uploading the same ID updates that employee</div>' +
+    '<div class="k">Last Name</div><div>required</div><div class="k">First Name</div><div>optional</div>' +
+    '<div class="k">Middle Name</div><div>optional</div><div class="k">Position</div><div>optional</div>' +
+    '<div class="k">Department</div><div>optional — matched by name to your Departments list</div></div>' +
+    '<p class="note">Full name is stored as “Lastname, Firstname Middlename”.</p>' +
+    '<label>CSV file</label><input type="file" accept=".csv,text/csv" id="bulk_file">' +
+    '<div id="bulk_status" class="note"></div>' +
+    '<div class="mfoot"><button class="btn2" onclick="bulkTemplate()">Download template</button><div class="sp" style="flex:1"></div>' +
+    '<button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" id="bulk_btn" onclick="bulkImport()">Import</button></div>');
+}
+function bulkTemplate() {
+  downloadCSV("employees_template.csv",
+    [{label:"Employee ID",get:"employee_id"},{label:"Last Name",get:"last_name"},{label:"First Name",get:"first_name"},{label:"Middle Name",get:"middle_name"},{label:"Position",get:"position"},{label:"Department",get:"department"}],
+    [{employee_id:"EMP-0001",last_name:"Dela Cruz",first_name:"Juan",middle_name:"Santos",position:"Accountant",department:"Admin"}]);
+}
+function parseCSV(text) {
+  const rows = []; let field = "", row = [], inQ = false;
+  text = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) { if (c === '"') { if (text[i+1] === '"') { field += '"'; i++; } else inQ = false; } else field += c; }
+    else if (c === '"') inQ = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+async function bulkImport() {
+  if (!P.ref()) return toast("You don't have permission to import", true);
+  const input = $("#bulk_file");
+  const file = input && input.files && input.files[0];
+  if (!file) return toast("Choose a CSV file first", true);
+  const btn = $("#bulk_btn"); if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
+  const setStatus = t => { const s = $("#bulk_status"); if (s) s.textContent = t; };
+  try {
+    const text = await file.text();
+    const rows = parseCSV(text);
+    if (rows.length < 2) throw new Error("The file has no data rows.");
+    const norm = s => String(s).toLowerCase().replace(/[^a-z]/g, "");
+    const header = rows[0].map(norm);
+    const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
+    const iId = col("employeeid","id","empid"), iLast = col("lastname","last","surname"),
+      iFirst = col("firstname","first","givenname"), iMid = col("middlename","middle","middleinitial","mi"),
+      iPos = col("position","title","role","designation"), iDept = col("department","dept");
+    if (iLast < 0) throw new Error('No "Last Name" column found in the header row.');
+    const deptByName = {}; (S.refs.departments || []).forEach(d => deptByName[norm(d.name)] = d.id);
+    const withId = [], noId = []; let unresolvedDept = 0, skipped = 0;
+    for (let r = 1; r < rows.length; r++) {
+      const c = rows[r];
+      const last = (c[iLast] || "").trim();
+      if (!last) { skipped++; continue; }
+      const first = iFirst >= 0 ? (c[iFirst] || "").trim() : "";
+      const mid = iMid >= 0 ? (c[iMid] || "").trim() : "";
+      const empId = iId >= 0 ? (c[iId] || "").trim() : "";
+      let deptId = null;
+      if (iDept >= 0) { const dn = (c[iDept] || "").trim(); if (dn) { deptId = deptByName[norm(dn)] || null; if (!deptId) unresolvedDept++; } }
+      const rec = { employee_id: empId || null, last_name: last, first_name: first || null, middle_name: mid || null,
+        name: composeName(last, first, mid), position: (iPos >= 0 ? (c[iPos] || "").trim() : "") || null, department_id: deptId, active: true };
+      (empId ? withId : noId).push(rec);
+    }
+    if (!withId.length && !noId.length) throw new Error("No valid rows (every row needs at least a last name).");
+    let inserted = 0, updated = 0;
+    if (withId.length) {
+      const before = withId.length;
+      const { error } = await sb.from("fam_employees").upsert(withId, { onConflict: "employee_id" });
+      if (error) throw error; updated = before;
+    }
+    if (noId.length) {
+      const { error } = await sb.from("fam_employees").insert(noId);
+      if (error) throw error; inserted = noId.length;
+    }
+    let msg = "Imported " + (inserted + updated) + " employees";
+    if (withId.length && noId.length) msg = "Imported " + noId.length + " new + " + withId.length + " by ID";
+    closeModal();
+    toast(msg + (skipped ? " · " + skipped + " skipped (no last name)" : "") + (unresolvedDept ? " · " + unresolvedDept + " unmatched dept" : ""));
+    await loadRefs(); renderSetup();
+  } catch (e) { err(e); if (btn) { btn.disabled = false; btn.textContent = "Import"; } }
 }
 
 /* ================= USERS (admin) ================= */
@@ -1629,6 +1802,127 @@ async function maintSave(assetId) {
     });
     if (error) throw error;
     toast("Log entry saved"); maintLog(assetId, (window._maintAsset || {}).label);
+  } catch (e) { err(e); }
+}
+
+/* ================= ASSET REVIEW / IMPAIRMENT ================= */
+const IMP_TYPES = { impairment:"Impairment (write-down)", reversal:"Reversal (write-back)", review:"Review only (no adjustment)" };
+async function impairLog(assetId, assetLabel) {
+  try {
+    const [{ data: rows, error }, { data: a }] = await Promise.all([
+      sb.from("fam_impairments").select("*").eq("asset_id", assetId).order("review_date", {ascending:false}).order("id", {ascending:false}),
+      sb.from("fam_assets").select("accumulated_impairment").eq("id", assetId).single(),
+    ]);
+    if (error) throw error;
+    window._impAsset = { id: assetId, label: assetLabel || ("#" + assetId) };
+    const accum = a ? Number(a.accumulated_impairment || 0) : 0;
+    const list = (rows && rows.length) ?
+      '<div class="scroll" style="max-height:42vh;overflow:auto"><table><thead><tr><th>Date</th><th>Type</th><th class="num">Amount</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>' +
+      rows.map(m => '<tr><td>' + dstr(m.review_date) + '</td><td>' + h(IMP_TYPES[m.type] || m.type) + '</td><td class="num">' + (m.type === "review" ? "—" : fmt(m.amount)) + '</td><td>' + h(m.reason || "—") + (m.remarks ? '<br><span class="note">' + h(m.remarks) + '</span>' : "") + '</td><td>' + pill(m.status) + '</td>' +
+        '<td class="right">' + (m.status === "pending" && P.approve() ? '<button class="btn3" onclick="impairApprove(' + m.id + ',\'approved\')">Approve</button> <button class="btn3 danger" onclick="impairApprove(' + m.id + ',\'rejected\')">Reject</button>' : (m.approved_at ? h(dstr(m.approved_at)) : "")) + '</td></tr>').join("") +
+      '</tbody></table></div>' : '<div class="empty">No impairment or review events for this asset.</div>';
+    openModal(mhead("Impairment / review — " + (assetLabel || "asset")) +
+      '<div class="kv" style="margin-bottom:12px"><div class="k">Accumulated impairment</div><div><strong style="color:' + (accum > 0 ? "var(--critical)" : "inherit") + '">' + fmt(accum) + '</strong></div></div>' +
+      list +
+      '<div class="note">Impairments and reversals affect net book value only after an Approver approves them.</div>' +
+      '<div class="mfoot">' + (P.prepare() ? '<button class="btn2" onclick="impairForm(' + assetId + ')">+ Record review</button>' : '') +
+      '<button class="btn" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+function impairForm(assetId) {
+  if (!P.prepare()) return toast("You don't have permission to record a review", true);
+  openModal(mhead("Record asset review") +
+    '<div class="frow"><div><label>Review date</label><input type="date" id="i_date" value="' + today() + '"></div>' +
+    '<div><label>Type</label><select id="i_type">' + Object.keys(IMP_TYPES).map(t => '<option value="' + t + '">' + IMP_TYPES[t] + '</option>').join("") + '</select></div></div>' +
+    '<div class="frow"><div><label>Amount (write-down / write-back)</label><input type="number" step="0.01" id="i_amount" value="0"></div>' +
+    '<div><label>Reviewed by</label><input id="i_by" value="' + h(S.me.full_name || "") + '"></div></div>' +
+    '<label>Reason</label><input id="i_reason" placeholder="e.g. physical damage, market value decline">' +
+    '<label>Remarks</label><textarea id="i_remarks" rows="2"></textarea>' +
+    '<div class="note">Amount is ignored for "Review only". Submitted as pending until approved.</div>' +
+    '<div class="mfoot"><button class="btn2" onclick="impairLog(' + assetId + ')">Cancel</button><button class="btn" onclick="impairSave(' + assetId + ')">Submit for approval</button></div>');
+}
+async function impairSave(assetId) {
+  const type = val("i_type");
+  const amount = Number(val("i_amount") || 0);
+  if (type !== "review" && amount <= 0) return toast("Enter an amount greater than zero", true);
+  try {
+    const { error } = await sb.from("fam_impairments").insert({
+      asset_id: assetId, review_date: val("i_date") || today(), type,
+      amount: type === "review" ? 0 : amount, reason: val("i_reason") || null,
+      reviewed_by: val("i_by") || null, remarks: val("i_remarks") || null, status: "pending",
+    });
+    if (error) throw error;
+    toast("Review submitted for approval"); impairLog(assetId, (window._impAsset || {}).label);
+  } catch (e) { err(e); }
+}
+async function impairApprove(id, status) {
+  if (!P.approve()) return toast("You don't have permission to approve", true);
+  try {
+    const { error } = await sb.from("fam_impairments").update({ status }).eq("id", id);
+    if (error) throw error;
+    toast("Review " + status);
+    const a = window._impAsset || {}; impairLog(a.id, a.label);
+    REG_CACHE = await fetchRegister();
+  } catch (e) { err(e); }
+}
+
+/* ================= DOCUMENT ATTACHMENTS ================= */
+const DOC_TYPES = ["po","invoice","receiving","disposal","photo","other"];
+function fileSize(n) { n = Number(n || 0); return n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB"; }
+async function docList(assetId, assetLabel) {
+  try {
+    const { data: rows, error } = await sb.from("fam_documents").select("*").eq("asset_id", assetId).order("created_at", {ascending:false});
+    if (error) throw error;
+    window._docAsset = { id: assetId, label: assetLabel || ("#" + assetId) };
+    const list = (rows && rows.length) ?
+      '<div class="scroll" style="max-height:40vh;overflow:auto"><table><thead><tr><th>File</th><th>Type</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead><tbody>' +
+      rows.map(d => '<tr><td><button class="btn3" onclick="docOpen(' + JSON.stringify(d.storage_path) + ')">' + h(d.file_name) + '</button></td>' +
+        '<td>' + h(d.doc_type || "—") + '</td><td class="num">' + fileSize(d.size_bytes) + '</td><td>' + dstr(d.created_at) + '<br><span class="note">' + h(d.uploaded_by || "") + '</span></td>' +
+        '<td class="right">' + (P.prepare() ? '<button class="btn3 danger" onclick="docDelete(' + d.id + ',' + JSON.stringify(d.storage_path) + ')">Remove</button>' : "") + '</td></tr>').join("") +
+      '</tbody></table></div>' : '<div class="empty">No documents attached to this asset.</div>';
+    openModal(mhead("Documents — " + (assetLabel || "asset")) + list +
+      (P.prepare() ?
+        '<div class="card" style="margin-top:12px"><div class="frow"><div><label>Document type</label><select id="doc_type">' + DOC_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join("") + '</select></div>' +
+        '<div><label>File</label><input type="file" id="doc_file"></div></div>' +
+        '<div class="mfoot" style="margin-top:10px"><button class="btn" id="doc_up_btn" onclick="docUpload(' + assetId + ')">Upload</button></div></div>' : "") +
+      '<div class="mfoot"><button class="btn" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function docUpload(assetId) {
+  const input = $("#doc_file");
+  const file = input && input.files && input.files[0];
+  if (!file) return toast("Choose a file first", true);
+  if (file.size > 25 * 1048576) return toast("File too large (max 25 MB)", true);
+  const btn = $("#doc_up_btn"); if (btn) { btn.disabled = true; btn.textContent = "Uploading…"; }
+  try {
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = "asset_" + assetId + "/" + Date.now() + "_" + safe;
+    const { error: ue } = await sb.storage.from("fam-docs").upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+    if (ue) throw ue;
+    const { error: de } = await sb.from("fam_documents").insert({
+      asset_id: assetId, file_name: file.name, storage_path: path,
+      mime: file.type || null, size_bytes: file.size, doc_type: val("doc_type") || "other",
+      uploaded_by: S.me.full_name || S.me.email || null,
+    });
+    if (de) throw de;
+    toast("Document uploaded"); docList(assetId, (window._docAsset || {}).label);
+  } catch (e) { err(e); if (btn) { btn.disabled = false; btn.textContent = "Upload"; } }
+}
+async function docOpen(path) {
+  try {
+    const { data, error } = await sb.storage.from("fam-docs").createSignedUrl(path, 120);
+    if (error) throw error;
+    window.open(data.signedUrl, "_blank");
+  } catch (e) { err(e); }
+}
+async function docDelete(id, path) {
+  if (!P.prepare()) return toast("You don't have permission to remove documents", true);
+  try {
+    await sb.storage.from("fam-docs").remove([path]);
+    const { error } = await sb.from("fam_documents").delete().eq("id", id);
+    if (error) throw error;
+    toast("Document removed");
+    const a = window._docAsset || {}; docList(a.id, a.label);
   } catch (e) { err(e); }
 }
 
