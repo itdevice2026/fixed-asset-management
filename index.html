@@ -1067,49 +1067,71 @@ async function callAdmin(payload) {
   return j;
 }
 const ROLE_LIST = ["viewer","editor","preparer","approver","admin"];
+let USERS_CACHE = [];
 async function vUsers() {
-  let users = [];
-  try { const res = await callAdmin({ action: "list_users" }); users = res.users || []; }
+  try { const res = await callAdmin({ action: "list_users" }); USERS_CACHE = res.users || []; }
   catch (e) { $("#main").innerHTML = '<h2>Users</h2><div class="card empty">Could not load users: ' + h(e.message) + '</div>'; return; }
+  const withAccess = USERS_CACHE.filter(u => u.has_access).length;
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Users</h2><p class="sub" style="margin:0">Create accounts and assign roles & company. Users sign in with email + password.</p></div><div class="sp"></div>' +
-    '<button class="btn" onclick="userForm()">+ New user</button></div>' +
-    '<div class="card">' + (users.length ?
-      '<div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
-      users.map(u => '<tr><td>' + h(u.full_name || "—") + '</td><td>' + h(u.email || "—") + '</td><td><span class="rolechip">' + h(u.role) + '</span></td><td>' + h(u.fam_companies ? u.fam_companies.name : (u.role === "admin" ? "All" : "—")) + '</td><td>' + (u.active ? pill("active") : pill("disposed").replace("disposed","inactive")) + '</td>' +
-        '<td class="right"><button class="mini" onclick=\'userForm(' + JSON.stringify(u).replace(/'/g,"&#39;") + ')\'>Edit</button> ' +
-        (u.id === S.me.id ? '' : '<button class="mini danger" onclick="userDelete(\'' + u.id + '\',\'' + h(u.email) + '\')">Delete</button>') + '</td></tr>').join("") +
-      '</tbody></table></div>' : '<div class="empty">No users yet.</div>') + '</div>';
+    '<div class="bar"><div><h2>Users</h2><p class="sub" style="margin:0">' + withAccess + ' of ' + USERS_CACHE.length + ' accounts have Fixed Assets access. Grant a role to let someone in.</p></div><div class="sp"></div>' +
+    '<button class="btn" onclick="userForm()">+ New account</button></div>' +
+    '<div class="bar"><input id="uq" placeholder="Search name or email…" style="max-width:300px" oninput="renderUsers()">' +
+    '<select id="uf" style="max-width:180px" onchange="renderUsers()"><option value="">All accounts</option><option value="access">With access</option><option value="none">No access</option></select></div>' +
+    '<div class="card" id="usersWrap"></div>';
+  renderUsers();
+}
+function renderUsers() {
+  const q = (val("uq") || "").toLowerCase(), f = val("uf");
+  const rows = USERS_CACHE.filter(u =>
+    (!q || (u.email || "").toLowerCase().includes(q) || (u.full_name || "").toLowerCase().includes(q)) &&
+    (f !== "access" || u.has_access) && (f !== "none" || !u.has_access));
+  $("#usersWrap").innerHTML = rows.length ?
+    '<div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Access</th><th>Company</th><th></th></tr></thead><tbody>' +
+    rows.map(u => {
+      const access = !u.has_access ? '<span style="color:var(--ink-3)">no access</span>'
+        : '<span class="rolechip">' + h(u.role) + '</span>' + (u.active === false ? ' ' + pill("rejected").replace("rejected","inactive") : "");
+      const comp = u.role === "admin" ? "All" : (u.company_name || (u.has_access ? "—" : ""));
+      const enc = JSON.stringify(u).replace(/'/g, "&#39;");
+      const actions = u.has_access
+        ? '<button class="mini" onclick=\'userForm(' + enc + ')\'>Edit</button> ' + (u.id === S.me.id ? '' : '<button class="mini danger" onclick="userRevoke(\'' + u.id + '\')">Remove access</button>')
+        : '<button class="mini" onclick=\'userForm(' + enc + ')\'>Grant access</button>';
+      return '<tr><td>' + h(u.full_name || "—") + '</td><td>' + h(u.email || "—") + '</td><td>' + access + '</td><td>' + h(comp) + '</td><td class="right">' + actions + '</td></tr>';
+    }).join("") +
+    '</tbody></table></div><div class="note">' + rows.length + ' account(s)</div>'
+    : '<div class="empty">No accounts match.</div>';
 }
 function userForm(u) {
   u = u || null;
-  const editing = !!u;
-  openModal(mhead(editing ? "Edit user" : "New user") +
-    '<div class="frow"><div><label>Full name</label><input id="u_name" value="' + h(u ? u.full_name : "") + '"></div>' +
-    '<div><label>Email</label><input id="u_email" type="email" value="' + h(u ? u.email : "") + '"' + (editing ? " disabled" : "") + '></div></div>' +
-    '<div class="frow"><div><label>Role</label><select id="u_role">' + ROLE_LIST.map(r => '<option value="' + r + '"' + (u && u.role === r ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
-    '<div><label>Company (blank = all, for admins)</label><select id="u_company">' + opts(S.refs.companies, u ? u.company_id : "", "All companies") + '</select></div></div>' +
-    '<label>' + (editing ? "Reset password (leave blank to keep)" : "Temporary password") + '</label><input id="u_pw" type="text" placeholder="' + (editing ? "unchanged" : "at least 6 characters") + '">' +
-    (editing ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') +
-    '<div class="note">Non-admin users only see and act on their assigned company. Admins see all companies.</div>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="userSave(' + (editing ? "'" + u.id + "'" : "null") + ')">Save</button></div>');
+  const existing = !!(u && u.id);           // account already exists in the system
+  const granting = existing && !u.has_access;
+  const title = !u ? "New account" : (granting ? "Grant access" : "Edit user");
+  openModal(mhead(title) +
+    '<div class="frow"><div><label>Full name</label><input id="u_name" value="' + h(u ? (u.full_name || "") : "") + '"></div>' +
+    '<div><label>Email</label><input id="u_email" type="email" value="' + h(u ? (u.email || "") : "") + '"' + (existing ? " disabled" : "") + '></div></div>' +
+    '<div class="frow"><div><label>Role</label><select id="u_role">' + ROLE_LIST.map(r => '<option value="' + r + '"' + ((u && u.role === r) || (!(u && u.role) && r === "viewer") ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
+    '<div><label>Company (blank = all, admins only)</label><select id="u_company">' + opts(S.refs.companies, u ? u.company_id : "", "All companies") + '</select></div></div>' +
+    '<label>' + (existing ? "Reset password (leave blank to keep theirs)" : "Temporary password") + '</label><input id="u_pw" type="text" placeholder="' + (existing ? "unchanged" : "at least 6 characters") + '">' +
+    (existing && u.has_access ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') +
+    '<div class="note">' + (granting ? "This account already exists — you are giving it Fixed Assets access. " : "") + 'Non-admins only see their assigned company; admins see all.</div>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="userSave(' + (existing ? "'" + u.id + "'" : "null") + ')">' + (granting ? "Grant access" : "Save") + '</button></div>');
 }
 async function userSave(id) {
-  const role = val("u_role"), company_id = val("u_company") || null, full_name = val("u_name"), pw = val("u_pw");
+  const role = val("u_role"), company_id = val("u_company") || null, full_name = val("u_name"), pw = val("u_pw"), email = val("u_email");
   try {
     if (id) {
-      await callAdmin({ action: "update_user", id, role, company_id, full_name, active: val("u_active") === "true", password: pw || undefined });
+      const payload = { action: "update_user", id, email, role, company_id, full_name, password: pw || undefined };
+      if ($("#u_active")) payload.active = val("u_active") === "true"; else payload.active = true;
+      await callAdmin(payload);
     } else {
-      const email = val("u_email");
       if (!email) return toast("Email is required", true);
       if (pw.length < 6) return toast("Password must be at least 6 characters", true);
       await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_id });
     }
-    closeModal(); toast("User saved"); vUsers();
+    closeModal(); toast("Saved"); vUsers();
   } catch (e) { err(e); }
 }
-async function userDelete(id, email) {
-  try { await callAdmin({ action: "delete_user", id }); toast("User deleted"); vUsers(); }
+async function userRevoke(id) {
+  try { await callAdmin({ action: "revoke_user", id }); toast("Access removed"); vUsers(); }
   catch (e) { err(e); }
 }
 
