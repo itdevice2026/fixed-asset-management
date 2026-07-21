@@ -430,6 +430,7 @@ function renderUserBadge() {
 const VIEWS = [
   ["dashboard","Dashboard",()=>true],
   ["arequests","Asset Requests",()=>true],
+  ["budget","Budget Approval",()=>P.approve()],
   ["requests","Purchase Requests",()=>true],
   ["pos","Purchase Orders",()=>true],
   ["assets","Assets",()=>true],
@@ -447,7 +448,7 @@ function renderNav() {
 async function go(v) {
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
-  const fn = { dashboard:vDashboard, arequests:vAssetRequests, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
+  const fn = { dashboard:vDashboard, arequests:vAssetRequests, budget:vBudget, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
     disposals:vDisposals, counts:vCounts, reports:vReports, setup:vSetup, users:vUsers }[v];
   try { await fn(); }
   catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Refresh and try again.</div>'; }
@@ -571,14 +572,17 @@ async function arDetail(id) {
       '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
       '<div class="k">Status</div><div>' + arPill(ar.status) + '</div>' +
       (ar.dept_approved_at ? '<div class="k">Dept head approved</div><div>' + dstr(ar.dept_approved_at.slice(0,10)) + '</div>' : "") +
-      (ar.budget_approved_at ? '<div class="k">Budget approved</div><div>' + dstr(ar.budget_approved_at.slice(0,10)) + '</div>' : "") +
+      (ar.budget_approved_at ? '<div class="k">Budget approved</div><div>' + dstr(ar.budget_approved_at.slice(0,10)) + (ar.budget_owner ? ' · ' + h(ar.budget_owner) : "") + '</div>' : "") +
+      (ar.budget_amount != null ? '<div class="k">Approved budget</div><div><strong>' + fmt(ar.budget_amount) + '</strong></div>' : "") +
+      (ar.budget_source ? '<div class="k">Budget source</div><div>' + h(ar.budget_source) + '</div>' : "") +
+      (ar.budget_remarks ? '<div class="k">Budget remarks</div><div>' + h(ar.budget_remarks) + '</div>' : "") +
       (ar.notes ? '<div class="k">Notes</div><div>' + h(ar.notes) + '</div>' : "") + '</div>' +
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
       items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
-      (ar.status === "dept_approved" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'budget_approved\')">Approve budget</button>' : "") +
+      (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
       (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -605,6 +609,84 @@ async function arConvert(id) {
     const { error: e3 } = await sb.from("fam_asset_requests").update({ status: "converted" }).eq("id", id);
     if (e3) throw e3;
     closeModal(); toast("Purchase Requisition " + (pr.pr_number || "") + " created"); go("requests");
+  } catch (e) { err(e); }
+}
+
+/* ================= BUDGET APPROVAL (step 2) ================= */
+async function vBudget() {
+  const { data: ars, error } = await sb.from("fam_asset_requests")
+    .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
+    .in("status", ["dept_approved","budget_approved","rejected"])
+    .order("request_date", {ascending:false}).order("id", {ascending:false});
+  if (error) throw error;
+  const pending = (ars || []).filter(a => a.status === "dept_approved");
+  const decided = (ars || []).filter(a => a.status !== "dept_approved");
+  const estTot = a => (a.fam_ar_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+  const rowsHtml = (list, showBudget) => list.map(a =>
+    '<tr class="click" onclick="budgetDetail(' + a.id + ')"><td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(estTot(a)) + '</td>' + (showBudget ? '<td class="num">' + (a.budget_amount != null ? fmt(a.budget_amount) : "—") + '</td>' : "") + '<td>' + arPill(a.status) + '</td></tr>').join("");
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Budget Approval</h2><p class="sub" style="margin:0">Step 2: Finance / Budget Owner confirms budget availability for department-approved requests</p></div></div>' +
+    '<div class="card"><h3 style="margin:0 0 10px">Awaiting budget approval' + (pending.length ? ' (' + pending.length + ')' : '') + '</h3>' +
+    (pending.length ? '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
+      rowsHtml(pending, false) + '</tbody></table></div>' : '<div class="empty">Nothing awaiting budget approval.</div>') + '</div>' +
+    (decided.length ? '<div class="card"><h3 style="margin:0 0 10px">Recently decided</h3><div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th class="num">Approved budget</th><th>Status</th></tr></thead><tbody>' +
+      rowsHtml(decided, true) + '</tbody></table></div></div>' : "");
+}
+async function budgetDetail(id) {
+  try {
+    const { data: ar, error } = await sb.from("fam_asset_requests").select("*, fam_companies(name), fam_departments(name), fam_ar_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const items = ar.fam_ar_items || [];
+    const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+    const decided = ar.status === "budget_approved" || ar.status === "converted";
+    const canAct = ar.status === "dept_approved" && P.approve();
+    openModal(mhead("Budget approval — " + (ar.ar_number || "")) + companyLogoImg(ar.company_id) +
+      '<div class="kv"><div class="k">Company</div><div>' + h(ar.fam_companies?ar.fam_companies.name:"—") + '</div>' +
+      '<div class="k">Department</div><div>' + h(ar.fam_departments?ar.fam_departments.name:"—") + '</div>' +
+      '<div class="k">Requested by</div><div>' + h(ar.requested_by || "—") + '</div>' +
+      '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
+      '<div class="k">Dept head approved</div><div>' + (ar.dept_approved_at ? dstr(ar.dept_approved_at.slice(0,10)) : "—") + '</div>' +
+      '<div class="k">Estimated total</div><div><strong>' + fmt(tot) + '</strong></div>' +
+      '<div class="k">Status</div><div>' + arPill(ar.status) + '</div></div>' +
+      '<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
+      items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
+      '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
+      (canAct ?
+        '<div class="card" style="margin-top:12px"><h3 style="margin:0 0 8px">Budget decision</h3>' +
+        '<div class="frow"><div><label>Approved budget amount</label><input type="number" step="0.01" id="bg_amount" value="' + (ar.budget_amount != null ? ar.budget_amount : tot) + '"></div>' +
+        '<div><label>Budget owner / approver</label><input id="bg_owner" value="' + h(ar.budget_owner || S.me.full_name || "") + '"></div></div>' +
+        '<label>Budget source / account / cost center</label><input id="bg_source" value="' + h(ar.budget_source || "") + '" placeholder="e.g. CAPEX 2026 — IT, GL 1500">' +
+        '<label>Remarks / justification</label><textarea id="bg_remarks" rows="2">' + h(ar.budget_remarks || "") + '</textarea></div>'
+        : (decided ?
+          '<div class="kv" style="margin-top:12px"><div class="k">Approved budget</div><div><strong>' + (ar.budget_amount != null ? fmt(ar.budget_amount) : "—") + '</strong></div>' +
+          '<div class="k">Budget owner</div><div>' + h(ar.budget_owner || "—") + '</div>' +
+          '<div class="k">Budget source</div><div>' + h(ar.budget_source || "—") + '</div>' +
+          (ar.budget_remarks ? '<div class="k">Remarks</div><div>' + h(ar.budget_remarks) + '</div>' : "") + '</div>' : "")) +
+      '<div class="mfoot">' +
+      (canAct ? '<button class="btn2 danger" onclick="budgetReject(' + ar.id + ')">Reject</button><button class="btn" onclick="budgetApprove(' + ar.id + ')">Confirm budget &amp; approve</button>' : "") +
+      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
+      '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function budgetApprove(id) {
+  const amt = val("bg_amount");
+  if (amt === "" || Number(amt) < 0) return toast("Enter an approved budget amount", true);
+  try {
+    const { error } = await sb.from("fam_asset_requests").update({
+      status: "budget_approved", budget_amount: Number(amt),
+      budget_owner: val("bg_owner") || null, budget_source: val("bg_source") || null, budget_remarks: val("bg_remarks") || null,
+    }).eq("id", id);
+    if (error) throw error;
+    closeModal(); toast("Budget approved"); if (S.view === "budget") vBudget(); else if (S.view === "arequests") vAssetRequests();
+  } catch (e) { err(e); }
+}
+async function budgetReject(id) {
+  try {
+    const { error } = await sb.from("fam_asset_requests").update({
+      status: "rejected", budget_remarks: val("bg_remarks") || null,
+    }).eq("id", id);
+    if (error) throw error;
+    closeModal(); toast("Request rejected"); if (S.view === "budget") vBudget(); else if (S.view === "arequests") vAssetRequests();
   } catch (e) { err(e); }
 }
 
