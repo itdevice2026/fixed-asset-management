@@ -255,6 +255,29 @@ function defaultCompany() {
   if (S.me && S.me.company_id && list.some(c => String(c.id) === String(S.me.company_id))) return S.me.company_id;
   return list.length === 1 ? list[0].id : "";
 }
+async function previewNumber(kind, companyId, dateStr, elId) {
+  const el = $("#" + elId); if (!el) return;
+  if (!companyId) { el.textContent = "PO/PR number is generated automatically on save."; return; }
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
+  const code = (c && c.code && c.code.trim()) ? c.code.trim().toUpperCase()
+    : (c ? (c.name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "PO") : "PO");
+  const table = kind === "pr" ? "fam_purchase_requests" : "fam_purchase_orders";
+  const dcol = kind === "pr" ? "request_date" : "po_date";
+  const mid = kind === "pr" ? "PR" : "";
+  const d = dateStr || today();
+  const p = d.split("-");
+  const mmddyyyy = (p[1] || "") + (p[2] || "") + (p[0] || "");
+  try {
+    const { count } = await sb.from(table).select("id", { count: "exact", head: true }).eq("company_id", companyId).eq(dcol, d);
+    const seq = String((count || 0) + 1).padStart(3, "0");
+    el.innerHTML = "Will be assigned: <strong>" + code + mid + mmddyyyy + seq + "</strong>";
+  } catch (e) { el.textContent = "Number generated automatically on save."; }
+}
+function wirePreview(kind, companyEl, dateEl, elId) {
+  const upd = () => previewNumber(kind, val(companyEl), val(dateEl), elId);
+  [companyEl, dateEl].forEach(id => { const e = $("#" + id); if (e) e.addEventListener("change", upd); });
+  upd();
+}
 
 /* ================= STATE ================= */
 const S = { me: null, refs: {}, view: "dashboard", reportTab: "register", setupTab: "companies",
@@ -437,6 +460,7 @@ function prForm() {
   openModal(mhead("New purchase request") +
     '<div class="frow"><div><label>Company</label>' + companyField("pr_company", defaultCompany()) + '</div>' +
     '<div><label>Request date</label><input type="date" id="pr_date" value="' + today() + '"></div></div>' +
+    '<div id="pr_num_preview" class="note" style="margin-top:0"></div>' +
     '<div class="frow"><div><label>Requested by</label><input id="pr_by" value="' + h(S.me.full_name || "") + '"></div>' +
     '<div><label>Department</label><select id="pr_dept">' + opts(S.refs.departments, "", "—") + '</select></div></div>' +
     '<label>Purpose / justification</label><input id="pr_purpose" placeholder="e.g. replacement laptops for Finance">' +
@@ -444,6 +468,7 @@ function prForm() {
     '<button class="mini" onclick="document.getElementById(\'prItems\').insertAdjacentHTML(\'beforeend\', prItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="pr_notes" rows="2"></textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave()">Submit request</button></div>');
+  wirePreview("pr", "pr_company", "pr_date", "pr_num_preview");
 }
 async function prSave() {
   const company_id = val("pr_company");
@@ -556,11 +581,12 @@ function poForm() {
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(S.refs.suppliers, "", "Select supplier…") + '</select></div>' +
     '<div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div></div>' +
-    '<div class="note">PO number is generated automatically as company code + date + sequence.</div>' +
+    '<div id="po_num_preview" class="note" style="margin-top:0"></div>' +
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>');
+  wirePreview("po", "f_company", "f_po_date", "po_num_preview");
 }
 async function poSave() {
   const company_id = val("f_company");
