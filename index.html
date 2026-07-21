@@ -139,8 +139,11 @@ label:first-child{margin-top:0}
 .pill.pending{color:var(--ink-2)} .pill.approved{color:var(--good-text)} .pill.rejected{color:var(--critical)} .pill.converted{color:var(--accent)}
 .auth{position:fixed;inset:0;background:var(--page);display:none;align-items:center;justify-content:center;z-index:200;padding:24px}
 .auth.on{display:flex}
-.authcard{background:var(--surface-1);border:1px solid var(--grid);border-radius:16px;padding:28px;max-width:380px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.08)}
+.authcard{background:var(--surface-1);border:1px solid var(--grid);border-radius:16px;padding:28px;max-width:430px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.08)}
 .authcard h1{font-size:20px;margin:0 0 2px}
+.brandlogos{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:18px}
+.brandlogos .blogo{background:#fff;border:1px solid var(--grid);border-radius:9px;padding:6px 9px;height:48px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.brandlogos .blogo img{max-height:34px;max-width:98px;object-fit:contain;display:block}
 .authcard .sub{margin:0 0 20px}
 .authcard .err{color:var(--critical);font-size:12.5px;margin-top:10px;min-height:16px}
 .authcard button.btn{width:100%;margin-top:16px;padding:11px}
@@ -352,12 +355,23 @@ async function fetchRegister() {
 function showAuth(inner) { $("#authscreen").innerHTML = inner; $("#authscreen").classList.add("on"); $("#topbar").style.display = "none"; $("#main").innerHTML = ""; }
 function hideAuth() { $("#authscreen").classList.remove("on"); $("#authscreen").innerHTML = ""; $("#topbar").style.display = ""; }
 function loginScreen(msg) {
-  showAuth('<div class="authcard"><div class="brandmark">FA</div><h1>All Company Fixed Assets</h1><p class="sub">Sign in to continue</p>' +
+  showAuth('<div class="authcard"><div class="brandlogos" id="brandlogos"><div class="brandmark">FA</div></div>' +
+    '<h1>All Company Fixed Assets</h1><p class="sub">Sign in to continue</p>' +
     '<label>Email</label><input id="li_email" type="email" autocomplete="username">' +
     '<label>Password</label><input id="li_pw" type="password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')doLogin()">' +
     '<div class="err" id="li_err">' + (msg ? h(msg) : "") + '</div>' +
     '<button class="btn" onclick="doLogin()">Sign in</button></div>');
+  loadBrandLogos();
   setTimeout(() => { const e = $("#li_email"); if (e) e.focus(); }, 60);
+}
+async function loadBrandLogos() {
+  try {
+    const { data, error } = await sb.rpc("fam_public_brands");
+    if (error || !data) return;
+    const withLogo = data.filter(c => c.logo_url);
+    const box = $("#brandlogos"); if (!box || !withLogo.length) return;
+    box.innerHTML = withLogo.map(c => '<div class="blogo"><img src="' + h(c.logo_url) + '" alt="' + h(c.name) + '" title="' + h(c.name) + '"></div>').join("");
+  } catch (e) {}
 }
 async function doLogin() {
   const email = val("li_email"), pw = ($("#li_pw") || {}).value || "";
