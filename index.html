@@ -88,6 +88,11 @@ label:first-child{margin-top:0}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:4vh 16px;overflow:auto}
 .overlay.on{display:flex}
 .modal{background:var(--surface-1);border-radius:14px;max-width:680px;width:100%;padding:20px;border:1px solid var(--ring)}
+.modal.wide{max-width:1040px}
+.overlay.on{padding-top:3vh}
+.modal.wide .itemrow{grid-template-columns:2fr 1fr 90px 150px 30px;gap:10px}
+.modal.wide .frow,.modal.wide .frow3{gap:0 18px}
+@media (max-width:720px){.itemrow,.modal.wide .itemrow{grid-template-columns:1fr}}
 .modal h3{font-size:16px;margin:0 0 12px}
 .mhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .x{appearance:none;border:0;background:none;font-size:20px;color:var(--ink-3);cursor:pointer;line-height:1}
@@ -197,8 +202,8 @@ function toast(msg, bad) {
 }
 function err(e) { console.error(e); toast((e && (e.message || e.details)) || "Something went wrong", true); }
 
-function openModal(html) { $("#modal").innerHTML = html; $("#overlay").classList.add("on"); }
-function closeModal() { $("#overlay").classList.remove("on"); $("#modal").innerHTML = ""; }
+function openModal(html, wide) { const m = $("#modal"); m.innerHTML = html; m.classList.toggle("wide", !!wide); $("#overlay").classList.add("on"); }
+function closeModal() { $("#overlay").classList.remove("on"); $("#modal").innerHTML = ""; $("#modal").classList.remove("wide"); }
 document.addEventListener("click", e => { if (e.target === $("#overlay")) closeModal(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 const mhead = t => '<div class="mhead"><h3>' + h(t) + '</h3><button class="x" onclick="closeModal()">&times;</button></div>';
@@ -467,7 +472,7 @@ function prForm() {
     '<label>Requested items</label><div id="prItems">' + prItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'prItems\').insertAdjacentHTML(\'beforeend\', prItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="pr_notes" rows="2"></textarea>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave()">Submit request</button></div>');
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave()">Submit request</button></div>', true);
   wirePreview("pr", "pr_company", "pr_date", "pr_num_preview");
 }
 async function prSave() {
@@ -511,7 +516,7 @@ async function prDetail(id) {
       '<div class="mfoot">' +
       (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
       (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
-      '<button class="btn2" onclick="closeModal()">Close</button></div>');
+      '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
 async function prSetStatus(id, status) {
@@ -585,7 +590,7 @@ function poForm() {
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>');
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>', true);
   wirePreview("po", "f_company", "f_po_date", "po_num_preview");
 }
 async function poSave() {
@@ -634,7 +639,7 @@ async function poDetail(id) {
       '<div class="mfoot">' +
       (po.status !== "received" && po.status !== "cancelled" && P.approve() ? '<button class="btn2" onclick="poStatus(' + po.id + ',\'received\')">Mark received</button>' : "") +
       ((po.status === "draft" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
-      '<button class="btn" onclick="closeModal()">Close</button></div>');
+      '<button class="btn" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
 async function poStatus(id, status) {
@@ -664,7 +669,7 @@ async function registerForm(poId, itemId) {
       '<div class="frow"><div><label>Department</label><select id="r_dept">' + opts(S.refs.departments, "", "—") + '</select></div>' +
       '<div><label>Custodian</label><select id="r_cust">' + opts(S.refs.employees, "", "—") + '</select></div></div>' +
       '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…).</div>' +
-      '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>');
+      '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
   } catch (e) { err(e); }
 }
 async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
