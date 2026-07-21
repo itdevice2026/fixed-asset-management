@@ -810,7 +810,7 @@ async function prConvert(id) {
     const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_pr_items(*)").eq("id", id).single();
     if (error) throw error;
     const { data: po, error: e1 } = await sb.from("fam_purchase_orders").insert(stamp({
-      company_id: pr.company_id, pr_id: pr.id, po_date: today(), status: "ordered",
+      company_id: pr.company_id, pr_id: pr.id, po_date: today(), status: "pending",
       notes: "From request " + (pr.pr_number || ""),
     })).select().single();
     if (e1) throw e1;
@@ -864,7 +864,7 @@ function poForm() {
     '<div class="frow"><div><label>Company</label>' + companyField("f_company", defaultCompany()) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(defaultCompany()), "", "Select supplier…") + '</select></div>' +
-    '<div><label>Status</label><select id="f_status"><option value="ordered">Ordered</option><option value="draft">Draft</option><option value="received">Received</option></select></div></div>' +
+    '<div><label>Status</label><select id="f_status"><option value="pending">Submit for approval</option><option value="draft">Draft</option></select></div></div>' +
     '<div id="po_num_preview" class="note" style="margin-top:0"></div>' +
     '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
@@ -906,6 +906,7 @@ async function poDetail(id) {
     const recByItem = {}; (receipts || []).forEach(rc => recByItem[rc.po_item_id] = (recByItem[rc.po_item_id] || 0) + rc.received_qty);
     const items = po.fam_po_items || [];
     const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
+    const approved = ["ordered","partially_received","received"].includes(po.status);
     openModal(mhead("PO " + (po.po_number || "")) + companyLogoImg(po.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies?po.fam_companies.name:"—") + '</div>' +
       (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + h(po.fam_purchase_requests.pr_number) + '</div>' : "") +
@@ -913,21 +914,35 @@ async function poDetail(id) {
       '<div class="k">Date</div><div>' + dstr(po.po_date) + '</div>' +
       '<div class="k">Created by</div><div>' + h(po.created_by_name || "—") + '</div>' +
       '<div class="k">Status</div><div>' + pill(po.status) + '</div>' +
+      (po.approved_by_name ? '<div class="k">Approved by</div><div>' + h(po.approved_by_name) + '</div>' : "") +
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
+      (po.status === "pending" ? '<div class="note" style="margin-top:8px">This PO is awaiting approval before it can be issued and received.</div>' : "") +
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
         return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
         '<td class="right" style="white-space:nowrap">' +
-        (remRecv > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
-        (rem > 0 && po.status !== "cancelled" && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
+        (remRecv > 0 && approved && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
+        (rem > 0 && approved && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'po\',' + po.id + ')">Print</button>' +
       (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
-      ((po.status === "draft" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
+      (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue PO</button>' : "") +
+      (po.status === "draft" && P.prepare() ? '<button class="btn" onclick="poStatus(' + po.id + ',\'pending\')">Submit for approval</button>' : "") +
+      ((po.status === "draft" || po.status === "pending" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function poApprove(id, status) {
+  if (!P.approve()) return toast("You don't have permission to approve POs", true);
+  try {
+    const patch = { status };
+    if (status === "ordered") patch.approved_by_name = meName();
+    const { error } = await sb.from("fam_purchase_orders").update(patch).eq("id", id);
+    if (error) throw error;
+    toast(status === "ordered" ? "PO approved & issued" : "PO rejected"); poDetail(id); if (S.view === "pos") vPOs();
   } catch (e) { err(e); }
 }
 async function poStatus(id, status) {
