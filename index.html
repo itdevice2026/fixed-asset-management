@@ -543,7 +543,7 @@ async function prConvert(id) {
 /* ================= PURCHASE ORDERS ================= */
 async function vPOs() {
   const { data: pos, error } = await sb.from("fam_purchase_orders")
-    .select("*, fam_suppliers(name), fam_companies(name), fam_po_items(id, quantity, unit_cost)")
+    .select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(id, quantity, unit_cost)")
     .order("po_date", {ascending: false}).order("id", {ascending: false});
   if (error) throw error;
   const ids = pos.map(p => p.id);
@@ -556,11 +556,11 @@ async function vPOs() {
     '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">PO numbers auto-generate; assets are registered from received POs</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + '</div>' +
     '<div class="card">' + (pos.length ?
-      '<div class="scroll"><table><thead><tr><th>PO #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
+      '<div class="scroll"><table><thead><tr><th>PO #</th><th>PR #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
       pos.map(p => { const items = p.fam_po_items || [];
         const total = items.reduce((s, i) => s + i.quantity * i.unit_cost, 0);
         const qty = items.reduce((s, i) => s + i.quantity, 0);
-        return '<tr class="click" onclick="poDetail(' + p.id + ')"><td><strong>' + h(p.po_number || "—") + '</strong></td><td>' + dstr(p.po_date) + '</td><td>' + h(p.fam_companies?p.fam_companies.name:"—") + '</td><td>' + h(p.fam_suppliers ? p.fam_suppliers.name : "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(total) + '</td><td class="num">' + (regByPO[p.id] || 0) + ' / ' + qty + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
+        return '<tr class="click" onclick="poDetail(' + p.id + ')"><td><strong>' + h(p.po_number || "—") + '</strong></td><td>' + h(p.fam_purchase_requests ? p.fam_purchase_requests.pr_number : "—") + '</td><td>' + dstr(p.po_date) + '</td><td>' + h(p.fam_companies?p.fam_companies.name:"—") + '</td><td>' + h(p.fam_suppliers ? p.fam_suppliers.name : "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(total) + '</td><td class="num">' + (regByPO[p.id] || 0) + ' / ' + qty + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
       '</tbody></table></div>'
       : '<div class="empty">No purchase orders yet. Approve a purchase request and convert it, or create one directly.</div>') + '</div>';
 }
