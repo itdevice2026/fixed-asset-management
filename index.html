@@ -412,6 +412,7 @@ const VIEWS = [
   ["assets","Assets",()=>true],
   ["transfers","Transfers",()=>true],
   ["disposals","Disposals",()=>true],
+  ["counts","Inventory Count",()=>true],
   ["reports","Reports",()=>true],
   ["setup","Setup",()=>P.ref()],
   ["users","Users",()=>P.admin()],
@@ -424,7 +425,7 @@ async function go(v) {
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
   const fn = { dashboard:vDashboard, arequests:vAssetRequests, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
-    disposals:vDisposals, reports:vReports, setup:vSetup, users:vUsers }[v];
+    disposals:vDisposals, counts:vCounts, reports:vReports, setup:vSetup, users:vUsers }[v];
   try { await fn(); }
   catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Refresh and try again.</div>'; }
 }
@@ -987,6 +988,7 @@ async function assetDetail(id) {
       (r.notes ? '<div class="k">Notes</div><div>' + h(r.notes) + '</div>' : "") +
       '</div><div class="mfoot">' +
       '<button class="btn2" onclick="printAssetTag()">Print tag</button><button class="btn2" onclick="printAccountability()">Accountability form</button>' +
+      '<button class="btn2" onclick="maintLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Maintenance log</button>' +
       (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>');
   } catch (e) { err(e); }
@@ -1461,6 +1463,173 @@ async function userSave(id) {
 async function userRevoke(id) {
   try { await callAdmin({ action: "revoke_user", id }); toast("Access removed"); vUsers(); }
   catch (e) { err(e); }
+}
+
+/* ================= PHYSICAL INVENTORY COUNT ================= */
+const CL_STATUS = { pending:"Pending", found:"Found", not_found:"Not found", for_review:"For review" };
+function clPill(s) { return '<span class="pill ' + (s === "found" ? "active" : s === "not_found" ? "lost" : s === "for_review" ? "under_repair" : "draft") + '">' + h(CL_STATUS[s] || s) + '</span>'; }
+async function vCounts() {
+  const { data: sess, error } = await sb.from("fam_count_sessions").select("*").order("count_date", {ascending:false}).order("id", {ascending:false});
+  if (error) throw error;
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Inventory Count</h2><p class="sub" style="margin:0">Physical count sessions reconciled against the asset register</p></div><div class="sp"></div>' +
+    (P.prepare() ? '<button class="btn" onclick="countForm()">+ New count session</button>' : '') + '</div>' +
+    '<div class="card">' + ((sess && sess.length) ?
+      '<div class="scroll"><table><thead><tr><th>Date</th><th>Session</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
+      sess.map(s => '<tr class="click" onclick="countDetail(' + s.id + ')"><td>' + dstr(s.count_date) + '</td><td><strong>' + h(s.name || "Count") + '</strong></td><td>' + h(refName(S.refs.companies, s.company_id)) + '</td><td>' + pill(s.status) + '</td><td class="right">' + h(s.notes || "") + '</td></tr>').join("") +
+      '</tbody></table></div>' : '<div class="empty">No count sessions yet.</div>') + '</div>';
+}
+function countForm() {
+  if (!P.prepare()) return toast("You don't have permission to start a count", true);
+  openModal(mhead("New count session") +
+    '<div class="frow"><div><label>Session name</label><input id="c_name" placeholder="e.g. Q3 2026 Physical Count"></div>' +
+    '<div><label>Count date</label><input type="date" id="c_date" value="' + today() + '"></div></div>' +
+    '<label>Company</label>' + companyField("c_company", defaultCompany()) +
+    '<label>Notes</label><textarea id="c_notes" rows="2"></textarea>' +
+    '<div class="note">A count line will be generated for every non-disposed asset in the selected company.</div>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="countCreate()">Create &amp; generate lines</button></div>');
+}
+async function countCreate() {
+  const company_id = val("c_company");
+  if (!company_id) return toast("Select a company", true);
+  try {
+    const { data: assets, error: ea } = await sb.from("fam_assets").select("id").eq("company_id", company_id).neq("status", "disposed");
+    if (ea) throw ea;
+    if (!assets || !assets.length) return toast("No active assets in this company to count", true);
+    const { data: s, error: es } = await sb.from("fam_count_sessions").insert({
+      name: val("c_name") || "Physical Count", count_date: val("c_date") || today(),
+      company_id, status: "open", notes: val("c_notes") || null,
+    }).select("id").single();
+    if (es) throw es;
+    const lines = assets.map(a => ({ session_id: s.id, asset_id: a.id, status: "pending" }));
+    const { error: el } = await sb.from("fam_count_lines").insert(lines);
+    if (el) throw el;
+    closeModal(); toast("Count session created with " + lines.length + " lines"); countDetail(s.id);
+  } catch (e) { err(e); }
+}
+async function countDetail(id) {
+  try {
+    const [{ data: s, error: es }, { data: lines, error: el }, { data: assets }] = await Promise.all([
+      sb.from("fam_count_sessions").select("*").eq("id", id).single(),
+      sb.from("fam_count_lines").select("*").eq("session_id", id).order("id"),
+      sb.from("fam_assets").select("id, asset_code, name, location_id"),
+    ]);
+    if (es) throw es; if (el) throw el;
+    const an = {}; (assets || []).forEach(a => an[a.id] = a);
+    window._countSess = s; window._countLines = lines || [];
+    const c = { pending:0, found:0, not_found:0, for_review:0 };
+    (lines || []).forEach(l => c[l.status] = (c[l.status] || 0) + 1);
+    const total = (lines || []).length;
+    const open = s.status === "open";
+    const canEdit = open && P.prepare();
+    const summary = '<div class="grid tiles" style="margin-bottom:14px">' +
+      '<div class="card tile" style="margin:0"><div class="lbl">Total</div><div class="val">' + total + '</div></div>' +
+      '<div class="card tile" style="margin:0"><div class="lbl">Found</div><div class="val" style="color:var(--good-text)">' + c.found + '</div></div>' +
+      '<div class="card tile" style="margin:0"><div class="lbl">Not found</div><div class="val" style="color:var(--critical)">' + c.not_found + '</div></div>' +
+      '<div class="card tile" style="margin:0"><div class="lbl">For review</div><div class="val">' + c.for_review + '</div></div>' +
+      '<div class="card tile" style="margin:0"><div class="lbl">Pending</div><div class="val" style="color:var(--ink-3)">' + c.pending + '</div></div></div>';
+    const rows = (lines || []).map(l => { const a = an[l.asset_id] || {}; const expLoc = refName(S.refs.locations, a.location_id);
+      return '<tr><td><strong>' + h(a.asset_code || "#" + l.asset_id) + '</strong><br><span class="note">' + h(a.name || "") + '</span></td>' +
+        '<td>' + h(expLoc) + '</td><td>' + clPill(l.status) + '</td>' +
+        '<td>' + h(l.condition || "—") + '</td><td>' + h(l.actual_location || "—") + '</td>' +
+        '<td class="right">' + (canEdit ?
+          '<button class="btn3" onclick="clSet(' + l.id + ',\'found\')">Found</button> ' +
+          '<button class="btn3 danger" onclick="clSet(' + l.id + ',\'not_found\')">Missing</button> ' +
+          '<button class="btn3" onclick="clReview(' + l.id + ')">Note…</button>' : (l.remarks ? h(l.remarks) : "")) + '</td></tr>'; }).join("");
+    openModal(mhead((s.name || "Count") + " — " + dstr(s.count_date)) +
+      '<div class="kv" style="margin-bottom:12px"><div class="k">Company</div><div>' + h(refName(S.refs.companies, s.company_id)) + '</div>' +
+      '<div class="k">Status</div><div>' + pill(s.status) + '</div>' + (s.notes ? '<div class="k">Notes</div><div>' + h(s.notes) + '</div>' : "") + '</div>' +
+      summary +
+      '<div class="scroll" style="max-height:46vh;overflow:auto"><table><thead><tr><th>Asset</th><th>Expected loc.</th><th>Result</th><th>Condition</th><th>Actual loc.</th><th></th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="6" class="empty">No lines.</td></tr>') + '</tbody></table></div>' +
+      '<div class="mfoot">' +
+      (canEdit ? '<button class="btn2" onclick="clSetAllFound(' + id + ')">Mark all pending as found</button><button class="btn2 danger" onclick="countClose(' + id + ')">Close session</button>' : '') +
+      '<button class="btn" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+async function clSet(lineId, status, extra) {
+  try {
+    const { error } = await sb.from("fam_count_lines").update(Object.assign({ status }, extra || {})).eq("id", lineId);
+    if (error) throw error;
+    countDetail(window._countSess.id);
+  } catch (e) { err(e); }
+}
+function clReview(lineId) {
+  const l = (window._countLines || []).find(x => x.id === lineId) || {};
+  openModal(mhead("Count note") +
+    '<label>Result</label><select id="cl_status">' + ["for_review","found","not_found","pending"].map(s => '<option value="' + s + '"' + (l.status === s ? " selected" : "") + '>' + CL_STATUS[s] + '</option>').join("") + '</select>' +
+    '<div class="frow"><div><label>Condition</label><input id="cl_cond" value="' + h(l.condition || "") + '" placeholder="e.g. good, damaged"></div>' +
+    '<div><label>Actual location</label><input id="cl_loc" value="' + h(l.actual_location || "") + '"></div></div>' +
+    '<label>Remarks</label><textarea id="cl_remarks" rows="2">' + h(l.remarks || "") + '</textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="countDetail(window._countSess.id)">Cancel</button><button class="btn" onclick="clReviewSave(' + lineId + ')">Save</button></div>');
+}
+async function clReviewSave(lineId) {
+  try {
+    const { error } = await sb.from("fam_count_lines").update({
+      status: val("cl_status"), condition: val("cl_cond") || null,
+      actual_location: val("cl_loc") || null, remarks: val("cl_remarks") || null,
+    }).eq("id", lineId);
+    if (error) throw error;
+    countDetail(window._countSess.id);
+  } catch (e) { err(e); }
+}
+async function clSetAllFound(sessId) {
+  try {
+    const { error } = await sb.from("fam_count_lines").update({ status: "found" }).eq("session_id", sessId).eq("status", "pending");
+    if (error) throw error;
+    toast("Pending lines marked found"); countDetail(sessId);
+  } catch (e) { err(e); }
+}
+async function countClose(sessId) {
+  if (!P.prepare()) return;
+  try {
+    const { error } = await sb.from("fam_count_sessions").update({ status: "closed" }).eq("id", sessId);
+    if (error) throw error;
+    toast("Count session closed"); closeModal(); if (S.view === "counts") vCounts();
+  } catch (e) { err(e); }
+}
+
+/* ================= MAINTENANCE & REPAIRS ================= */
+const MNT_TYPES = ["maintenance","repair","service","inspection","calibration"];
+async function maintLog(assetId, assetLabel) {
+  try {
+    const { data: rows, error } = await sb.from("fam_maintenance").select("*").eq("asset_id", assetId).order("log_date", {ascending:false}).order("id", {ascending:false});
+    if (error) throw error;
+    window._maintAsset = { id: assetId, label: assetLabel || ("#" + assetId) };
+    const list = (rows && rows.length) ?
+      '<div class="scroll" style="max-height:44vh;overflow:auto"><table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th class="num">Cost</th><th>Vendor</th><th>Next due</th></tr></thead><tbody>' +
+      rows.map(m => '<tr><td>' + dstr(m.log_date) + '</td><td>' + h((m.type||"").replace(/_/g," ")) + '</td><td>' + h(m.description || "—") + (m.remarks ? '<br><span class="note">' + h(m.remarks) + '</span>' : "") + '</td><td class="num">' + (m.cost != null ? fmt(m.cost) : "—") + '</td><td>' + h(m.vendor || "—") + '</td><td>' + (m.next_due ? dstr(m.next_due) : "—") + '</td></tr>').join("") +
+      '</tbody></table></div>' : '<div class="empty">No maintenance or repairs logged for this asset.</div>';
+    openModal(mhead("Maintenance & repairs — " + (assetLabel || "asset")) + list +
+      '<div class="mfoot">' + (P.prepare() ? '<button class="btn2" onclick="maintForm(' + assetId + ')">+ Add log entry</button>' : '') +
+      '<button class="btn" onclick="closeModal()">Close</button></div>', true);
+  } catch (e) { err(e); }
+}
+function maintForm(assetId) {
+  if (!P.prepare()) return toast("You don't have permission to log maintenance", true);
+  openModal(mhead("Log maintenance / repair") +
+    '<div class="frow3"><div><label>Date</label><input type="date" id="m_date" value="' + today() + '"></div>' +
+    '<div><label>Type</label><select id="m_type">' + MNT_TYPES.map(t => '<option value="' + t + '">' + t + '</option>').join("") + '</select></div>' +
+    '<div><label>Cost</label><input type="number" step="0.01" id="m_cost" value="0"></div></div>' +
+    '<label>Description</label><textarea id="m_desc" rows="2"></textarea>' +
+    '<div class="frow3"><div><label>Vendor</label><input id="m_vendor"></div>' +
+    '<div><label>Performed by</label><input id="m_by" value="' + h(S.me.full_name || "") + '"></div>' +
+    '<div><label>Next due</label><input type="date" id="m_next"></div></div>' +
+    '<label>Remarks</label><textarea id="m_remarks" rows="2"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="maintLog(' + assetId + ')">Cancel</button><button class="btn" onclick="maintSave(' + assetId + ')">Save entry</button></div>');
+}
+async function maintSave(assetId) {
+  const desc = val("m_desc");
+  if (!desc) return toast("Description is required", true);
+  try {
+    const { error } = await sb.from("fam_maintenance").insert({
+      asset_id: assetId, log_date: val("m_date") || today(), type: val("m_type") || "maintenance",
+      description: desc, cost: Number(val("m_cost") || 0), vendor: val("m_vendor") || null,
+      performed_by: val("m_by") || null, next_due: val("m_next") || null, remarks: val("m_remarks") || null,
+    });
+    if (error) throw error;
+    toast("Log entry saved"); maintLog(assetId, (window._maintAsset || {}).label);
+  } catch (e) { err(e); }
 }
 
 /* ================= THEME & BOOT ================= */
