@@ -293,6 +293,11 @@ function defaultCompany() {
   if (S.me && S.me.company_id && list.some(c => String(c.id) === String(S.me.company_id))) return S.me.company_id;
   return list.length === 1 ? list[0].id : "";
 }
+function employeesFor(companyId) {
+  const list = S.refs.employees || [];
+  if (!companyId) return list;
+  return list.filter(e => e.company_id == null || String(e.company_id) === String(companyId));
+}
 function companyLogoImg(companyId, px) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
   return (c && c.logo_url) ? '<img src="' + h(c.logo_url) + '" alt="" style="height:' + (px || 40) + 'px;max-width:180px;object-fit:contain;display:block;margin:0 0 10px">' : '';
@@ -943,7 +948,7 @@ async function registerForm(poId, itemId) {
       '<div class="frow"><div><label>Salvage value (each)</label><input type="number" id="r_salvage" step="0.01" value="' + (cat ? (item.unit_cost * cat.salvage_rate / 100) : 0).toFixed(2) + '"></div>' +
       '<div><label>Location</label><select id="r_loc">' + opts(S.refs.locations, "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Department</label><select id="r_dept">' + opts(S.refs.departments, "", "—") + '</select></div>' +
-      '<div><label>Custodian</label><select id="r_cust">' + opts(S.refs.employees, "", "—") + '</select></div></div>' +
+      '<div><label>Custodian</label><select id="r_cust">' + opts(employeesFor(parent.company_id), "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Cost center</label><input id="r_costcenter" placeholder="e.g. Admin-101"></div>' +
       '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
       '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…). Depreciation is auto-computed straight-line.</div>' +
@@ -1172,11 +1177,13 @@ async function assetForm(id) {
     '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(S.refs.suppliers, a.supplier_id, "—") + '</select></div>' +
-    '<div><label>Custodian</label><select id="a_cust">' + opts(S.refs.employees, a.custodian_id, "—") + '</select></div></div>' +
+    '<div><label>Custodian</label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
     '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
     '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div></div>' +
     '<label>Notes</label><textarea id="a_notes" rows="2">' + h(a.notes || "") + '</textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="assetSave(' + (id || "null") + ')">Save</button></div>');
+  const coEl = $("#a_company");
+  if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("a_cust"); const el = $("#a_cust"); if (el) el.innerHTML = opts(employeesFor(val("a_company")), cur, "—"); });
 }
 function catDefaults() {
   const c = (S.refs.categories || []).find(x => String(x.id) === val("a_cat"));
@@ -1248,8 +1255,11 @@ async function transferForm(assetId) {
   const cur = $("#t_asset");
   const show = async () => {
     if (!cur.value) return $("#t_current").textContent = "";
-    const { data: a } = await sb.from("fam_assets").select("location_id, department_id, custodian_id").eq("id", cur.value).single();
-    if (a) $("#t_current").textContent = "Currently: " + refName(S.refs.locations, a.location_id) + " · " + refName(S.refs.departments, a.department_id) + " · " + refName(S.refs.employees, a.custodian_id);
+    const { data: a } = await sb.from("fam_assets").select("location_id, department_id, custodian_id, company_id").eq("id", cur.value).single();
+    if (a) {
+      $("#t_current").textContent = "Currently: " + refName(S.refs.locations, a.location_id) + " · " + refName(S.refs.departments, a.department_id) + " · " + refName(S.refs.employees, a.custodian_id);
+      const el = $("#t_cust"); if (el) el.innerHTML = opts(employeesFor(a.company_id), "", "(keep)");
+    }
   };
   cur.onchange = show; if (assetId) show();
 }
@@ -1499,10 +1509,11 @@ const SETUP = {
   departments: { title: "Departments", table: "fam_departments", fields: [{k:"name",l:"Name",req:1}]},
   locations: { title: "Locations / branches", table: "fam_locations", fields: [{k:"name",l:"Name",req:1},{k:"address",l:"Address"}]},
   employees: { title: "Employees", table: "fam_employees", bulk: true, fields: [
+    {k:"company_id",l:"Company",type:"ref",ref:"companies",req:1},
     {k:"employee_id",l:"Employee ID"},{k:"last_name",l:"Last name",req:1},{k:"first_name",l:"First name"},{k:"middle_name",l:"Middle name"},
     {k:"position",l:"Position"},{k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool",def:true}],
     listFields: [
-    {k:"employee_id",l:"Employee ID"},{k:"name",l:"Full name (Last, First Middle)"},{k:"position",l:"Position"},
+    {k:"employee_id",l:"Employee ID"},{k:"name",l:"Full name (Last, First Middle)"},{k:"company_id",l:"Company",type:"ref",ref:"companies"},{k:"position",l:"Position"},
     {k:"department_id",l:"Department",type:"ref",ref:"departments"},{k:"active",l:"Active",type:"bool"}]},
 };
 function composeName(l, f, m) { l = (l||"").trim(); f = (f||"").trim(); m = (m||"").trim(); let n = l; if (f) n += (l ? ", " : "") + f; if (m) n += " " + m; return n.trim(); }
@@ -1538,11 +1549,14 @@ async function renderSetup() {
 function setupForm(id) {
   const cfg = SETUP[S.setupTab];
   const r = id ? (S.refs[S.setupTab] || []).find(x => x.id === id) : {};
-  if (cfg.table === "fam_employees" && r && r.name && !r.last_name && !r.first_name) {
-    const parts = String(r.name).split(",");
-    r.last_name = (parts[0] || "").trim();
-    const rest = (parts.slice(1).join(",")).trim().split(/\s+/).filter(Boolean);
-    r.first_name = rest.shift() || ""; r.middle_name = rest.join(" ");
+  if (cfg.table === "fam_employees") {
+    if (r && r.name && !r.last_name && !r.first_name) {
+      const parts = String(r.name).split(",");
+      r.last_name = (parts[0] || "").trim();
+      const rest = (parts.slice(1).join(",")).trim().split(/\s+/).filter(Boolean);
+      r.first_name = rest.shift() || ""; r.middle_name = rest.join(" ");
+    }
+    if (r.company_id == null) r.company_id = defaultCompany();
   }
   openModal(mhead((id ? "Edit " : "Add ") + cfg.title.toLowerCase().replace(/s$/, "")) +
     cfg.fields.map(f => {
@@ -1625,17 +1639,19 @@ function bulkForm() {
     '<div class="kv" style="margin-bottom:12px"><div class="k">Employee ID</div><div>optional — unique code; re-uploading the same ID updates that employee</div>' +
     '<div class="k">Last Name</div><div>required</div><div class="k">First Name</div><div>optional</div>' +
     '<div class="k">Middle Name</div><div>optional</div><div class="k">Position</div><div>optional</div>' +
-    '<div class="k">Department</div><div>optional — matched by name to your Departments list</div></div>' +
-    '<p class="note">Full name is stored as “Lastname, Firstname Middlename”.</p>' +
+    '<div class="k">Department</div><div>optional — matched by name to your Departments list</div>' +
+    '<div class="k">Company</div><div>' + (multiCompany() ? "matched by name or code; blank rows default to your company" : "optional — defaults to " + h(refName(S.refs.companies, defaultCompany()))) + '</div></div>' +
+    '<p class="note">Full name is stored as “Lastname, Firstname Middlename”. Every employee is assigned to a company.</p>' +
     '<label>CSV file</label><input type="file" accept=".csv,text/csv" id="bulk_file">' +
     '<div id="bulk_status" class="note"></div>' +
     '<div class="mfoot"><button class="btn2" onclick="bulkTemplate()">Download template</button><div class="sp" style="flex:1"></div>' +
     '<button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" id="bulk_btn" onclick="bulkImport()">Import</button></div>');
 }
 function bulkTemplate() {
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(defaultCompany())) || (S.refs.companies || [])[0] || {};
   downloadCSV("employees_template.csv",
-    [{label:"Employee ID",get:"employee_id"},{label:"Last Name",get:"last_name"},{label:"First Name",get:"first_name"},{label:"Middle Name",get:"middle_name"},{label:"Position",get:"position"},{label:"Department",get:"department"}],
-    [{employee_id:"EMP-0001",last_name:"Dela Cruz",first_name:"Juan",middle_name:"Santos",position:"Accountant",department:"Admin"}]);
+    [{label:"Employee ID",get:"employee_id"},{label:"Last Name",get:"last_name"},{label:"First Name",get:"first_name"},{label:"Middle Name",get:"middle_name"},{label:"Position",get:"position"},{label:"Department",get:"department"},{label:"Company",get:"company"}],
+    [{employee_id:"EMP-0001",last_name:"Dela Cruz",first_name:"Juan",middle_name:"Santos",position:"Accountant",department:"Accounting",company:c.name || ""}]);
 }
 function parseCSV(text) {
   const rows = []; let field = "", row = [], inQ = false;
@@ -1667,10 +1683,12 @@ async function bulkImport() {
     const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
     const iId = col("employeeid","id","empid"), iLast = col("lastname","last","surname"),
       iFirst = col("firstname","first","givenname"), iMid = col("middlename","middle","middleinitial","mi"),
-      iPos = col("position","title","role","designation"), iDept = col("department","dept");
+      iPos = col("position","title","role","designation"), iDept = col("department","dept"), iCo = col("company","companyname","companycode");
     if (iLast < 0) throw new Error('No "Last Name" column found in the header row.');
     const deptByName = {}; (S.refs.departments || []).forEach(d => deptByName[norm(d.name)] = d.id);
-    const withId = [], noId = []; let unresolvedDept = 0, skipped = 0;
+    const coByKey = {}; (S.refs.companies || []).forEach(co => { coByKey[norm(co.name)] = co.id; if (co.code) coByKey[norm(co.code)] = co.id; });
+    const defCo = defaultCompany() || null;
+    const withId = [], noId = []; let unresolvedDept = 0, unresolvedCo = 0, skipped = 0;
     for (let r = 1; r < rows.length; r++) {
       const c = rows[r];
       const last = (c[iLast] || "").trim();
@@ -1680,8 +1698,11 @@ async function bulkImport() {
       const empId = iId >= 0 ? (c[iId] || "").trim() : "";
       let deptId = null;
       if (iDept >= 0) { const dn = (c[iDept] || "").trim(); if (dn) { deptId = deptByName[norm(dn)] || null; if (!deptId) unresolvedDept++; } }
+      let coId = defCo;
+      if (iCo >= 0) { const cn = (c[iCo] || "").trim(); if (cn) { coId = coByKey[norm(cn)] || null; if (!coId) { unresolvedCo++; coId = defCo; } } }
       const rec = { employee_id: empId || null, last_name: last, first_name: first || null, middle_name: mid || null,
-        name: composeName(last, first, mid), position: (iPos >= 0 ? (c[iPos] || "").trim() : "") || null, department_id: deptId, active: true };
+        name: composeName(last, first, mid), position: (iPos >= 0 ? (c[iPos] || "").trim() : "") || null,
+        department_id: deptId, company_id: coId, active: true };
       (empId ? withId : noId).push(rec);
     }
     if (!withId.length && !noId.length) throw new Error("No valid rows (every row needs at least a last name).");
@@ -1698,7 +1719,7 @@ async function bulkImport() {
     let msg = "Imported " + (inserted + updated) + " employees";
     if (withId.length && noId.length) msg = "Imported " + noId.length + " new + " + withId.length + " by ID";
     closeModal();
-    toast(msg + (skipped ? " · " + skipped + " skipped (no last name)" : "") + (unresolvedDept ? " · " + unresolvedDept + " unmatched dept" : ""));
+    toast(msg + (skipped ? " · " + skipped + " skipped (no last name)" : "") + (unresolvedDept ? " · " + unresolvedDept + " unmatched dept" : "") + (unresolvedCo ? " · " + unresolvedCo + " company defaulted" : ""));
     await loadRefs(); renderSetup();
   } catch (e) { err(e); if (btn) { btn.disabled = false; btn.textContent = "Import"; } }
 }
