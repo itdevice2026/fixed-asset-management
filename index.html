@@ -316,7 +316,7 @@ async function loadMe() {
   try {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) { loginScreen(); return; }
-    const { data: prof, error } = await sb.from("fam_profiles").select("*, fam_companies(name)").eq("id", user.id).maybeSingle();
+    const { data: prof, error } = await sb.from("fam_profiles").select("id,full_name,role,company_id,active").eq("id", user.id).maybeSingle();
     if (error) throw error;
     if (!prof || !prof.active) {
       showAuth('<div class="authcard"><div class="brandmark">FA</div><h1>No access yet</h1>' +
@@ -325,9 +325,10 @@ async function loadMe() {
       return;
     }
     S.me = { id: prof.id, email: user.email, full_name: prof.full_name, role: prof.role,
-             company_id: prof.company_id, company_name: prof.fam_companies ? prof.fam_companies.name : null };
+             company_id: prof.company_id, company_name: null };
     hideAuth();
     await loadRefs();
+    S.me.company_name = ((S.refs.companies || []).find(c => String(c.id) === String(prof.company_id)) || {}).name || null;
     renderUserBadge(); renderNav(); go("dashboard");
   } catch (e) { err(e); loginScreen("Could not load your profile — please try again."); }
 }
