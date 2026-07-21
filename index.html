@@ -35,16 +35,24 @@
   --btn-bg:#ffffff; --btn-ink:#0b0b0b;
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--page);color:var(--ink-1);font-size:14px;line-height:1.45}
-header{position:sticky;top:0;z-index:20;background:var(--surface-1);border-bottom:1px solid var(--grid);padding:0 20px}
-.hrow{display:flex;align-items:center;gap:16px;height:52px;max-width:1280px;margin:0 auto}
-.brand{font-weight:700;font-size:15px;white-space:nowrap}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--page);color:var(--ink-1);font-size:14px;line-height:1.45;display:flex;min-height:100vh}
+header{position:sticky;top:0;align-self:flex-start;height:100vh;z-index:20;background:var(--surface-1);border-right:1px solid var(--grid);width:216px;flex:0 0 216px;overflow-y:auto}
+.hrow{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:16px 12px;min-height:100%}
+.brand{font-weight:700;font-size:15px;white-space:nowrap;padding:4px 8px}
 .brand small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;margin-top:-2px}
-nav{display:flex;gap:2px;overflow-x:auto;flex:1}
-nav button{appearance:none;border:0;background:none;color:var(--ink-2);font:inherit;padding:8px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+nav{display:flex;flex-direction:column;gap:2px;overflow-y:auto;flex:1;width:100%}
+nav button{appearance:none;border:0;background:none;color:var(--ink-2);font:inherit;padding:9px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;text-align:left;width:100%}
 nav button:hover{background:var(--page)}
 nav button.on{background:var(--btn-bg);color:var(--btn-ink);font-weight:600}
-main{max-width:1280px;margin:0 auto;padding:20px}
+main{flex:1;min-width:0;padding:22px}
+@media (max-width:860px){
+  body{flex-direction:column}
+  header{width:auto;max-width:100%;height:auto;flex:none;border-right:0;border-bottom:1px solid var(--grid);overflow:hidden}
+  .hrow{flex-direction:row;align-items:center;gap:12px;height:52px;padding:0 14px;min-height:0;min-width:0}
+  nav{flex-direction:row;overflow-x:auto;overflow-y:hidden;min-width:0}
+  nav button{width:auto;text-align:center}
+  main{padding:16px}
+}
 h2{font-size:18px;margin:0 0 4px}
 h3{font-size:14px;margin:0 0 10px}
 .sub{color:var(--ink-3);font-size:12.5px;margin:0 0 16px}
@@ -124,7 +132,8 @@ label:first-child{margin-top:0}
   .sigline{border-top:1px solid #000;margin-top:40px;padding-top:4px;font-size:12px}
   .print-doc table{width:100%;border-collapse:collapse}
 }
-.userbadge{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.userbadge{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--ink-2);padding:10px 8px 2px;border-top:1px solid var(--grid)}
+@media (max-width:860px){.userbadge{border-top:0;padding:0;flex-wrap:nowrap;white-space:nowrap}}
 .userbadge .who{font-weight:600;color:var(--ink-1)}
 .rolechip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--ring);color:var(--ink-2)}
 .pill.pending{color:var(--ink-2)} .pill.approved{color:var(--good-text)} .pill.rejected{color:var(--critical)} .pill.converted{color:var(--accent)}
