@@ -676,21 +676,25 @@ async function arConvert(id) {
 async function vBudget() {
   const { data: ars, error } = await sb.from("fam_asset_requests")
     .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
-    .in("status", ["dept_approved","budget_approved","rejected"])
-    .order("request_date", {ascending:false}).order("id", {ascending:false});
+    .in("status", ["dept_approved","budget_approved","converted","rejected"])
+    .order("budget_approved_at", {ascending:false, nullsFirst:false}).order("id", {ascending:false});
   if (error) throw error;
-  const pending = (ars || []).filter(a => a.status === "dept_approved");
-  const decided = (ars || []).filter(a => a.status !== "dept_approved");
   const estTot = a => (a.fam_ar_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
-  const rowsHtml = (list, showBudget) => list.map(a =>
-    '<tr class="click" onclick="budgetDetail(' + a.id + ')">' + (showBudget ? '<td><strong>' + h(a.budget_number || "—") + '</strong></td>' : "") + '<td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(estTot(a)) + '</td>' + (showBudget ? '<td class="num">' + (a.budget_amount != null ? fmt(a.budget_amount) : "—") + '</td>' : "") + '<td>' + arPill(a.status) + '</td></tr>').join("");
+  const pending  = (ars || []).filter(a => a.status === "dept_approved");
+  const records  = (ars || []).filter(a => a.budget_number);            // approved (incl. converted) — persistent register
+  const rejected = (ars || []).filter(a => a.status === "rejected");
+  const pendRow = a => '<tr class="click" onclick="budgetDetail(' + a.id + ')"><td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(estTot(a)) + '</td><td>' + arPill(a.status) + '</td></tr>';
+  const recRow = a => '<tr class="click" onclick="budgetDetail(' + a.id + ')"><td><strong>' + h(a.budget_number || "—") + '</strong></td><td>' + (a.budget_approved_at ? dstr(a.budget_approved_at.slice(0,10)) : "—") + '</td><td>' + h(a.ar_number || "—") + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num"><strong>' + (a.budget_amount != null ? fmt(a.budget_amount) : "—") + '</strong></td><td>' + h(a.budget_owner || "—") + '</td><td>' + h(a.budget_source || "—") + '</td><td>' + arPill(a.status) + '</td></tr>';
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Budget Approval</h2><p class="sub" style="margin:0">Step 2: Finance / Budget Owner confirms budget availability for department-approved requests</p></div></div>' +
+    '<div class="bar"><div><h2>Budget Approval</h2><p class="sub" style="margin:0">Step 2: Finance / Budget Owner confirms budget availability. Every approved budget is recorded below with its own number for audit &amp; back-tracking.</p></div></div>' +
     '<div class="card"><h3 style="margin:0 0 10px">Awaiting budget approval' + (pending.length ? ' (' + pending.length + ')' : '') + '</h3>' +
     (pending.length ? '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
-      rowsHtml(pending, false) + '</tbody></table></div>' : '<div class="empty">Nothing awaiting budget approval.</div>') + '</div>' +
-    (decided.length ? '<div class="card"><h3 style="margin:0 0 10px">Recently decided</h3><div class="scroll"><table><thead><tr><th>Budget #</th><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th class="num">Approved budget</th><th>Status</th></tr></thead><tbody>' +
-      rowsHtml(decided, true) + '</tbody></table></div></div>' : "");
+      pending.map(pendRow).join("") + '</tbody></table></div>' : '<div class="empty">Nothing awaiting budget approval.</div>') + '</div>' +
+    '<div class="card"><h3 style="margin:0 0 10px">Budget approval records' + (records.length ? ' (' + records.length + ')' : '') + '</h3>' +
+    (records.length ? '<div class="scroll"><table><thead><tr><th>Budget #</th><th>Approved</th><th>AR #</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Approved budget</th><th>Owner</th><th>Source</th><th>Status</th></tr></thead><tbody>' +
+      records.map(recRow).join("") + '</tbody></table></div>' : '<div class="empty">No budget approvals recorded yet. Approve a department-approved request above and it will appear here.</div>') + '</div>' +
+    (rejected.length ? '<div class="card"><h3 style="margin:0 0 10px">Rejected</h3><div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
+      rejected.map(pendRow).join("") + '</tbody></table></div></div>' : "");
 }
 async function budgetDetail(id) {
   try {
@@ -1300,8 +1304,8 @@ async function vTransfers() {
     '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement between locations, departments, and custodians</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="transferForm()">+ New transfer</button>' : '') + '</div>' +
     '<div class="card">' + ((tr && tr.length) ?
-      '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Reason</th></tr></thead><tbody>' +
-      tr.map(t => '<tr><td>' + dstr(t.transfer_date) + '</td><td>' + h(an[t.asset_id] || "#" + t.asset_id) + '</td>' +
+      '<div class="scroll"><table><thead><tr><th>Transfer #</th><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Reason</th></tr></thead><tbody>' +
+      tr.map(t => '<tr><td><strong>' + h(t.transfer_number || "—") + '</strong></td><td>' + dstr(t.transfer_date) + '</td><td>' + h(an[t.asset_id] || "#" + t.asset_id) + '</td>' +
         '<td>' + h(refName(S.refs.locations, t.from_location_id)) + ' → ' + h(refName(S.refs.locations, t.to_location_id)) + '</td>' +
         '<td>' + h(refName(S.refs.departments, t.from_department_id)) + ' → ' + h(refName(S.refs.departments, t.to_department_id)) + '</td>' +
         '<td>' + h(refName(S.refs.employees, t.from_custodian_id)) + ' → ' + h(refName(S.refs.employees, t.to_custodian_id)) + '</td>' +
@@ -1370,9 +1374,9 @@ async function vDisposals() {
     '<div class="bar"><div><h2>Disposals</h2><p class="sub" style="margin:0">Disposals are prepared, then approved before the asset is retired</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="disposeForm()">+ Prepare disposal</button>' : '') + '</div>' +
     '<div class="card">' + ((dis && dis.length) ?
-      '<div class="scroll"><table><thead><tr><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Prepared by</th><th>Approval</th><th>Approved by</th><th></th></tr></thead><tbody>' +
+      '<div class="scroll"><table><thead><tr><th>Disposal #</th><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Prepared by</th><th>Approval</th><th>Approved by</th><th></th></tr></thead><tbody>' +
       dis.map(d => { const gl = Number(d.gain_loss || 0);
-        return '<tr><td>' + dstr(d.disposal_date) + '</td><td>' + h(an[d.asset_id] || "#" + d.asset_id) + '</td><td>' + h(d.method.replace(/_/g," ")) + '</td><td class="num">' + fmt(d.book_value_at_disposal) + '</td><td class="num">' + fmt(d.proceeds) + '</td><td class="num" style="color:' + (gl < 0 ? "var(--critical)" : "var(--good-text)") + '">' + (gl < 0 ? "(" + fmt(-gl) + ")" : fmt(gl)) + '</td><td>' + h(d.created_by_name || d.approved_by || "—") + '</td><td>' + pill(d.approval_status) + '</td><td>' + h(d.approved_by_name || "—") + '</td>' +
+        return '<tr><td><strong>' + h(d.disposal_number || "—") + '</strong></td><td>' + dstr(d.disposal_date) + '</td><td>' + h(an[d.asset_id] || "#" + d.asset_id) + '</td><td>' + h(d.method.replace(/_/g," ")) + '</td><td class="num">' + fmt(d.book_value_at_disposal) + '</td><td class="num">' + fmt(d.proceeds) + '</td><td class="num" style="color:' + (gl < 0 ? "var(--critical)" : "var(--good-text)") + '">' + (gl < 0 ? "(" + fmt(-gl) + ")" : fmt(gl)) + '</td><td>' + h(d.created_by_name || d.approved_by || "—") + '</td><td>' + pill(d.approval_status) + '</td><td>' + h(d.approved_by_name || "—") + '</td>' +
         '<td class="right">' + (d.approval_status === "pending" && P.approve() ? '<button class="btn3" onclick="disposeApprove(' + d.id + ',\'approved\')">Approve</button> <button class="btn3 danger" onclick="disposeApprove(' + d.id + ',\'rejected\')">Reject</button> ' : '') + (canDeleteTxn(d, ["pending","rejected"], "approval_status") ? '<button class="btn3 danger" onclick="askDeleteTxn(\'disp\',' + d.id + ',\'\')">Delete</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' : '<div class="empty">No disposals recorded.</div>') + '</div>';
 }
@@ -1933,8 +1937,8 @@ async function vCounts() {
     '<div class="bar"><div><h2>Inventory Count</h2><p class="sub" style="margin:0">Physical count sessions reconciled against the asset register</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="countForm()">+ New count session</button>' : '') + '</div>' +
     '<div class="card">' + ((sess && sess.length) ?
-      '<div class="scroll"><table><thead><tr><th>Date</th><th>Session</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
-      sess.map(s => '<tr class="click" onclick="countDetail(' + s.id + ')"><td>' + dstr(s.count_date) + '</td><td><strong>' + h(s.name || "Count") + '</strong></td><td>' + h(refName(S.refs.companies, s.company_id)) + '</td><td>' + pill(s.status) + '</td><td class="right">' + h(s.notes || "") + '</td></tr>').join("") +
+      '<div class="scroll"><table><thead><tr><th>Count #</th><th>Date</th><th>Session</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
+      sess.map(s => '<tr class="click" onclick="countDetail(' + s.id + ')"><td><strong>' + h(s.count_number || "—") + '</strong></td><td>' + dstr(s.count_date) + '</td><td><strong>' + h(s.name || "Count") + '</strong></td><td>' + h(refName(S.refs.companies, s.company_id)) + '</td><td>' + pill(s.status) + '</td><td class="right">' + h(s.notes || "") + '</td></tr>').join("") +
       '</tbody></table></div>' : '<div class="empty">No count sessions yet.</div>') + '</div>';
 }
 function countForm() {
@@ -1994,7 +1998,7 @@ async function countDetail(id) {
           '<button class="btn3" onclick="clSet(' + l.id + ',\'found\')">Found</button> ' +
           '<button class="btn3 danger" onclick="clSet(' + l.id + ',\'not_found\')">Missing</button> ' +
           '<button class="btn3" onclick="clReview(' + l.id + ')">Note…</button>' : (l.remarks ? h(l.remarks) : "")) + '</td></tr>'; }).join("");
-    openModal(mhead((s.name || "Count") + " — " + dstr(s.count_date)) +
+    openModal(mhead((s.count_number ? s.count_number + " · " : "") + (s.name || "Count") + " — " + dstr(s.count_date)) +
       '<div class="kv" style="margin-bottom:12px"><div class="k">Company</div><div>' + h(refName(S.refs.companies, s.company_id)) + '</div>' +
       '<div class="k">Status</div><div>' + pill(s.status) + '</div>' + (s.notes ? '<div class="k">Notes</div><div>' + h(s.notes) + '</div>' : "") + '</div>' +
       summary +
