@@ -1637,8 +1637,39 @@ function composeName(l, f, m) { l = (l||"").trim(); f = (f||"").trim(); m = (m||
 function setupKeys() { return Object.keys(SETUP).filter(k => !SETUP[k].adminOnly || isAdmin()); }
 async function vSetup() {
   if (!setupKeys().includes(S.setupTab)) S.setupTab = setupKeys()[0];
-  $("#main").innerHTML = '<h2>Setup</h2><p class="sub">Reference data used across the system' + (isAdmin() ? '' : ' — companies & users are admin-only') + '</p><div class="tabs2" id="stabs"></div><div id="sbody"></div>';
+  $("#main").innerHTML = '<h2>Setup</h2><p class="sub">Reference data used across the system' + (isAdmin() ? '' : ' — companies & users are admin-only') + '</p><div class="tabs2" id="stabs"></div><div id="sbody"></div>' +
+    (P.admin() ?
+      '<div class="card" style="border-color:var(--critical);margin-top:26px">' +
+      '<h3 style="margin:0 0 6px;color:var(--critical)">Danger zone</h3>' +
+      '<p class="sub" style="margin:0 0 12px">Permanently delete <strong>all transactions</strong> — Asset Requests, Budget approvals, Purchase Requisitions, Purchase Orders, Assets, Transfers, Disposals, and Inventory Counts — to start the database fresh for re-entry. Companies, departments, categories, locations, employees, suppliers, and users are kept. Asset codes restart at FA-00001. This cannot be undone.</p>' +
+      '<button class="btn" style="background:var(--critical);color:#fff" onclick="askResetTxns()">Reset all transactions…</button></div>'
+      : '');
   renderSetupTabs(); renderSetup();
+}
+function askResetTxns() {
+  if (!P.admin()) return toast("Only an administrator can reset transactions", true);
+  openModal(mhead("Reset all transactions") +
+    '<p style="margin:0 0 8px;color:var(--critical);font-weight:600">This permanently deletes EVERY transaction in the system and cannot be undone.</p>' +
+    '<p class="sub" style="margin:0 0 12px">Kept: companies, departments, categories, locations, employees, suppliers, users. Deleted: all Asset Requests, Budget approvals, Purchase Requisitions, Purchase Orders, Assets, Transfers, Disposals, and Inventory Counts. Asset codes restart at FA-00001. This action is recorded in the Delete Log.</p>' +
+    '<label>Type <strong>RESET</strong> to confirm</label><input id="reset_confirm" placeholder="RESET">' +
+    '<label>Reason (required — recorded in the Delete Log) <span style="color:var(--critical)">*</span></label>' +
+    '<textarea id="reset_reason" rows="2" placeholder="e.g. Clearing test data before go-live"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn" style="background:var(--critical);color:#fff" onclick="doResetTxns()">Delete everything</button></div>');
+}
+async function doResetTxns() {
+  if ((val("reset_confirm") || "").trim().toUpperCase() !== "RESET") return toast('Type RESET to confirm.', true);
+  const reason = (val("reset_reason") || "").trim();
+  if (!reason) return toast("A reason is required.", true);
+  try {
+    const { data, error } = await sb.rpc("fam_reset_transactions", { p_reason: reason });
+    if (error) throw error;
+    const d = data || {};
+    closeModal();
+    if (typeof REG_CACHE !== "undefined") REG_CACHE = [];
+    toast("Reset complete — " + ((d.asset_requests||0)+(d.purchase_requests||0)+(d.purchase_orders||0)+(d.assets||0)+(d.count_sessions||0)) + " records cleared. Database is fresh.");
+    go("dashboard");
+  } catch (e) { err(e); }
 }
 function renderSetupTabs() {
   $("#stabs").innerHTML = setupKeys().map(k =>
