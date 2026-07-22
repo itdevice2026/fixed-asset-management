@@ -481,7 +481,7 @@ async function loadMe() {
   try {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) { loginScreen(); return; }
-    const { data: prof, error } = await sb.from("fam_profiles").select("id,full_name,role,company_id,active").eq("id", user.id).maybeSingle();
+    const { data: prof, error } = await sb.from("fam_profiles").select("id,full_name,role,company_id,active,module_access").eq("id", user.id).maybeSingle();
     if (error) throw error;
     if (!prof || !prof.active) {
       showAuth('<div class="authcard"><div class="brandmark">FA</div><h1>No access yet</h1>' +
@@ -490,7 +490,7 @@ async function loadMe() {
       return;
     }
     S.me = { id: prof.id, email: user.email, full_name: prof.full_name, role: prof.role,
-             company_id: prof.company_id, company_name: null };
+             company_id: prof.company_id, company_name: null, module_access: prof.module_access || null };
     hideAuth();
     await loadRefs();
     S.me.company_name = ((S.refs.companies || []).find(c => String(c.id) === String(prof.company_id)) || {}).name || null;
@@ -523,11 +523,27 @@ const VIEWS = [
   ["users","Users",()=>P.admin()],
   ["deletelog","Delete Log",()=>P.approve()],
 ];
+/* modules an admin may assign to a specific user (Dashboard is always on; Users stays admin-only) */
+const GRANTABLE_VIEWS = VIEWS.filter(v => v[0] !== "dashboard" && v[0] !== "users");
+/* returns the explicit whitelist for the current user, or null = fall back to role defaults */
+function allowedModuleKeys() {
+  if (isAdmin()) return null;                       // admins always have full access
+  const ma = S.me && S.me.module_access;
+  if (ma && ma.length) return ["dashboard"].concat(ma);
+  return null;
+}
+function canAccessView(key) {
+  const allow = allowedModuleKeys();
+  if (allow) return allow.indexOf(key) >= 0;        // restricted user: only granted modules
+  const v = VIEWS.find(x => x[0] === key);          // otherwise role-based default
+  return v ? v[2]() : false;
+}
 function renderNav() {
-  $("#nav").innerHTML = VIEWS.filter(v => v[2]()).map(v =>
+  $("#nav").innerHTML = VIEWS.filter(v => canAccessView(v[0])).map(v =>
     '<button class="' + (S.view === v[0] ? "on" : "") + '" onclick="go(\'' + v[0] + '\')">' + v[1] + '</button>').join("");
 }
 async function go(v) {
+  if (!canAccessView(v)) { toast("You don't have access to that module", true); v = "dashboard"; }
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
   const fn = { dashboard:vDashboard, arequests:vAssetRequests, budget:vBudget, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
@@ -2054,6 +2070,7 @@ let USERS_CACHE = [];
 async function vUsers() {
   try { const res = await callAdmin({ action: "list_users" }); USERS_CACHE = res.users || []; }
   catch (e) { $("#main").innerHTML = '<h2>Users</h2><div class="card empty">Could not load users: ' + h(e.message) + '</div>'; return; }
+  try { const { data: profs } = await sb.from("fam_profiles").select("id, module_access"); const mm = {}; (profs || []).forEach(pp => mm[pp.id] = pp.module_access || null); USERS_CACHE.forEach(u => u.module_access = mm[u.id] || null); } catch (e) {}
   const withAccess = USERS_CACHE.filter(u => u.has_access).length;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Users</h2><p class="sub" style="margin:0">' + withAccess + ' of ' + USERS_CACHE.length + ' accounts have Fixed Assets access. Grant a role to let someone in.</p></div><div class="sp"></div>' +
@@ -2097,7 +2114,11 @@ function userForm(u) {
     '<div class="frow"><div><label>Role</label><select id="u_role" onchange="userRoleChange()">' + ROLE_LIST.map(r => '<option value="' + r + '"' + ((u && u.role === r) || (!(u && u.role) && r === "viewer") ? " selected" : "") + '>' + r + '</option>').join("") + '</select></div>' +
     '<div>' + (existing && u.has_access ? '<label>Status</label><select id="u_active"><option value="true"' + (u.active ? " selected" : "") + '>Active</option><option value="false"' + (!u.active ? " selected" : "") + '>Inactive</option></select>' : '') + '</div></div>' +
     '<div id="u_companies_wrap"><label>Companies (tick one or more)</label><div id="u_companies" style="border:1px solid var(--grid);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto">' + (checks || '<span class="note">No companies yet — add them under Setup.</span>') + '</div></div>' +
-    '<div id="u_admin_note" class="note" style="display:none">Admins have access to all companies automatically.</div>' +
+    '<div id="u_admin_note" class="note" style="display:none">Admins have access to all companies and all modules automatically.</div>' +
+    '<div id="u_modules_wrap"><label>Module access <span class="note" style="font-weight:400">— tick to restrict this user to only these modules; leave all unticked to allow every module their role permits</span></label>' +
+    '<div style="border:1px solid var(--grid);border-radius:8px;padding:8px 10px;max-height:170px;overflow:auto">' +
+    GRANTABLE_VIEWS.map(v => '<label style="display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0;font-weight:400"><input type="checkbox" class="u_mod" value="' + v[0] + '"' + (((u && u.module_access) || []).map(String).includes(v[0]) ? " checked" : "") + ' style="width:auto"> ' + h(v[1]) + '</label>').join("") +
+    '</div></div>' +
     '<label>' + (existing ? "Reset password (leave blank to keep theirs)" : "Temporary password") + '</label><input id="u_pw" type="text" placeholder="' + (existing ? "unchanged" : "at least 6 characters") + '">' +
     '<div class="note">' + (granting ? "This account already exists — you are giving it Fixed Assets access. " : "") + 'Non-admins only see the companies you tick.</div>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="userSave(' + (existing ? "'" + u.id + "'" : "null") + ')">' + (granting ? "Grant access" : "Save") + '</button></div>');
@@ -2105,15 +2126,19 @@ function userForm(u) {
 }
 function userRoleChange() {
   const admin = val("u_role") === "admin";
-  const wrap = $("#u_companies_wrap"), note = $("#u_admin_note");
+  const wrap = $("#u_companies_wrap"), note = $("#u_admin_note"), mods = $("#u_modules_wrap");
   if (wrap) wrap.style.display = admin ? "none" : "";
   if (note) note.style.display = admin ? "" : "none";
+  if (mods) mods.style.display = admin ? "none" : "";
 }
 async function userSave(id) {
   const role = val("u_role"), full_name = val("u_name"), pw = val("u_pw"), email = val("u_email");
   const company_ids = role === "admin" ? [] : $$(".u_co:checked").map(x => Number(x.value));
   if (role !== "admin" && company_ids.length === 0) return toast("Tick at least one company for this user", true);
+  const modChecked = $$(".u_mod:checked").map(x => x.value);
+  const module_access = (role === "admin" || !modChecked.length) ? null : modChecked;
   try {
+    let targetId = id;
     if (id) {
       const payload = { action: "update_user", id, email, role, company_ids, full_name, password: pw || undefined };
       payload.active = $("#u_active") ? (val("u_active") === "true") : true;
@@ -2121,8 +2146,10 @@ async function userSave(id) {
     } else {
       if (!email) return toast("Email is required", true);
       if (pw.length < 6) return toast("Password must be at least 6 characters", true);
-      await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_ids });
+      const res = await callAdmin({ action: "create_user", email, password: pw, full_name, role, company_ids });
+      targetId = (res && (res.id || res.user_id || (res.user && res.user.id))) || null;
     }
+    if (targetId) { try { await sb.from("fam_profiles").update({ module_access: module_access }).eq("id", targetId); } catch (me) { console.error("module_access update failed", me); } }
     closeModal(); toast("Saved"); vUsers();
   } catch (e) { err(e); }
 }
