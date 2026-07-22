@@ -871,7 +871,7 @@ async function prDetail(id) {
       '<div class="mfoot">' +
       '<button class="btn" onclick="printTxn(\'pr\',' + pr.id + ')">Print Record</button>' +
       (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
-      (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
+      (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="poForm(null,' + pr.id + ')">Create PO (enter item details) →</button>' : "") +
       (canDeleteTxn(pr, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'pr\',' + pr.id + ',' + JSON.stringify(pr.pr_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -906,9 +906,14 @@ async function prConvert(id) {
 
 /* ================= PURCHASE ORDERS ================= */
 async function vPOs() {
-  const { data: pos, error } = await sb.from("fam_purchase_orders")
-    .select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(id, quantity, unit_cost)")
-    .order("po_date", {ascending: false}).order("id", {ascending: false});
+  const [{ data: pos, error }, { data: approvedPRs }] = await Promise.all([
+    sb.from("fam_purchase_orders")
+      .select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(id, quantity, unit_cost)")
+      .order("po_date", {ascending: false}).order("id", {ascending: false}),
+    sb.from("fam_purchase_requests")
+      .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)")
+      .eq("status", "approved").order("request_date", {ascending: false}),
+  ]);
   if (error) throw error;
   const ids = pos.map(p => p.id);
   let regByPO = {};
@@ -916,9 +921,17 @@ async function vPOs() {
     const { data: as } = await sb.from("fam_assets").select("id, po_id").in("po_id", ids);
     (as || []).forEach(a => regByPO[a.po_id] = (regByPO[a.po_id] || 0) + 1);
   }
+  const prEst = a => (a.fam_pr_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+  const callout = (approvedPRs && approvedPRs.length) ?
+    '<div class="card" style="border-color:var(--accent)"><h3 style="margin:0 0 4px">Approved requests awaiting PO (' + approvedPRs.length + ')</h3>' +
+    '<p class="sub" style="margin:0 0 10px">Create the Purchase Order and enter the proper asset description, brand, model, and supplier for each item.</p>' +
+    '<div class="scroll"><table><thead><tr><th>PR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th></th></tr></thead><tbody>' +
+    approvedPRs.map(a => '<tr><td><strong>' + h(a.pr_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(prEst(a)) + '</td><td class="right">' + (P.prepare() ? '<button class="btn3" onclick="poForm(null,' + a.id + ')">Create PO →</button>' : '<button class="btn3" onclick="prDetail(' + a.id + ')">View</button>') + '</td></tr>').join("") +
+    '</tbody></table></div></div>' : "";
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">PO numbers auto-generate; assets are registered from received POs</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + deleteAllBtn('pos') + '</div>' +
+    callout +
     '<div class="card">' + (pos.length ?
       '<div class="scroll"><table><thead><tr><th>PO #</th><th>PR #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
       pos.map(p => { const items = p.fam_po_items || [];
@@ -942,20 +955,28 @@ function poItemRow(it) {
       '<input placeholder="Brand" class="pi-brand" value="' + h(it.brand || "") + '">' +
       '<input placeholder="Model" class="pi-model" value="' + h(it.model || "") + '"></div></div>';
 }
-async function poForm(id) {
+async function poForm(id, fromPr) {
   poItemN = 0;
-  let po = null, existingItems = [];
+  let po = null, existingItems = [], pr = null;
   if (id) {
     const { data, error } = await sb.from("fam_purchase_orders").select("*, fam_po_items(*)").eq("id", id).single();
     if (error) return err(error);
     po = data; existingItems = (po.fam_po_items || []).slice().sort((a,b)=>a.id-b.id);
+  } else if (fromPr) {
+    const { data, error } = await sb.from("fam_purchase_requests").select("*, fam_pr_items(*)").eq("id", fromPr).single();
+    if (error) return err(error);
+    pr = data;
+    existingItems = (pr.fam_pr_items || []).slice().sort((a,b)=>a.id-b.id).map(i => ({
+      description: i.description, category_id: i.category_id, quantity: i.quantity, unit_cost: i.estimated_unit_cost, brand: "", model: ""
+    }));
   }
-  const coDefault = po ? po.company_id : defaultCompany();
+  const coDefault = po ? po.company_id : (pr ? pr.company_id : defaultCompany());
   const itemsHtml = (existingItems.length ? existingItems : [null]).map(it => poItemRow(it || undefined)).join("");
   const statusOpts = po
     ? '<option value="' + h(po.status) + '" selected>' + h(po.status) + '</option>'
     : '<option value="pending">Submit for approval</option><option value="draft">Draft</option>';
-  openModal(mhead(id ? "Edit PO " + (po.po_number || "") : "New purchase order") +
+  openModal(mhead(id ? "Edit PO " + (po.po_number || "") : (pr ? "Create PO from " + (pr.pr_number || "request") : "New purchase order")) +
+    (pr ? '<div class="note" style="margin-top:0;color:var(--accent)">From approved request <strong>' + h(pr.pr_number || "") + '</strong> — enter the proper asset description, brand &amp; model, and supplier for each item.</div>' : "") +
     '<div class="frow"><div><label>Company</label>' + companyField("f_company", coDefault) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + (po ? po.po_date : today()) + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(coDefault), po ? po.supplier_id : "", "Select supplier…") + '</select></div>' +
@@ -963,13 +984,13 @@ async function poForm(id) {
     (id ? '' : '<div id="po_num_preview" class="note" style="margin-top:0"></div>') +
     '<label>Line items <span class="note" style="font-weight:400">— enter Brand &amp; Model of each asset</span></label><div id="poItems">' + itemsHtml + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
-    '<label>Notes</label><textarea id="f_notes" rows="2">' + (po ? h(po.notes || "") : "") + '</textarea>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave(' + (id || "null") + ')">' + (id ? "Save changes" : "Save PO") + '</button></div>', true);
+    '<label>Notes</label><textarea id="f_notes" rows="2">' + (po ? h(po.notes || "") : (pr ? "From request " + h(pr.pr_number || "") : "")) + '</textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave(' + (id || "null") + ',' + (fromPr || "null") + ')">' + (id ? "Save changes" : (pr ? "Create PO" : "Save PO")) + '</button></div>', true);
   if (!id) wirePreview("po", "f_company", "f_po_date", "po_num_preview");
   const coEl = $("#f_company");
   if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("f_supplier"); const el = $("#f_supplier"); if (el) el.innerHTML = opts(suppliersFor(val("f_company")), cur, "Select supplier…"); });
 }
-async function poSave(id) {
+async function poSave(id, fromPr) {
   const company_id = val("f_company");
   if (!company_id) return toast("Select a company", true);
   const items = $$("#poItems .itemrow").map(r => ({
@@ -994,13 +1015,14 @@ async function poSave(id) {
       closeModal(); toast("PO updated"); poDetail(id); if (S.view === "pos") vPOs();
     } else {
       const { data: po, error } = await sb.from("fam_purchase_orders").insert(stamp({
-        company_id, po_date: val("f_po_date") || today(),
+        company_id, pr_id: fromPr || null, po_date: val("f_po_date") || today(),
         supplier_id: val("f_supplier") || null, status: val("f_status"), notes: val("f_notes") || null
       })).select().single();
       if (error) throw error;
       const { error: e2 } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: po.id })));
       if (e2) throw e2;
-      closeModal(); toast("PO " + (po.po_number || "") + " saved"); go("pos");
+      if (fromPr) { const { error: e3 } = await sb.from("fam_purchase_requests").update({ status: "converted" }).eq("id", fromPr); if (e3) throw e3; }
+      closeModal(); toast("PO " + (po.po_number || "") + " created" + (fromPr ? " from request" : "")); go("pos");
     }
   } catch (e) { err(e); }
 }
