@@ -304,8 +304,9 @@ const TXN_DEL = {
 };
 function askDeleteTxn(kind, id, num) {
   const cfg = TXN_DEL[kind]; if (!cfg) return;
+  const cascade = P.admin() ? " If it has been converted, ALL linked transactions downstream (Purchase Requisition, Purchase Order, and any registered assets with their transfers/disposals/records) will also be permanently deleted." : "";
   confirmModal("Delete " + cfg.label + (num ? " " + num : ""),
-    "This permanently removes the " + cfg.label + " and its line items. This cannot be undone.",
+    "This permanently removes the " + cfg.label + " and its line items. This cannot be undone." + cascade,
     "Delete", () => txnDelete(kind, id));
 }
 async function txnDelete(kind, id) {
@@ -344,6 +345,10 @@ function suppliersFor(companyId) {
   const list = S.refs.suppliers || [];
   if (!companyId) return list;
   return list.filter(s => s.company_id == null || String(s.company_id) === String(companyId));
+}
+/* clickable trace link: closes current modal and opens the linked transaction detail */
+function traceLink(fn, id, label) {
+  return '<a href="#" onclick="closeModal();' + fn + '(' + id + ');return false" style="color:var(--accent);font-weight:600;text-decoration:none">' + h(label || ("#" + id)) + '</a>';
 }
 function companyLogoImg(companyId, px) {
   const c = (S.refs.companies || []).find(x => String(x.id) === String(companyId));
@@ -614,7 +619,7 @@ async function arSave() {
 }
 async function arDetail(id) {
   try {
-    const { data: ar, error } = await sb.from("fam_asset_requests").select("*, fam_companies(name), fam_departments(name), fam_ar_items(*)").eq("id", id).single();
+    const { data: ar, error } = await sb.from("fam_asset_requests").select("*, fam_companies(name), fam_departments(name), fam_ar_items(*), fam_purchase_requests(id, pr_number)").eq("id", id).single();
     if (error) throw error;
     const items = ar.fam_ar_items || [];
     const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
@@ -626,6 +631,7 @@ async function arDetail(id) {
       '<div class="k">Department</div><div>' + h(ar.fam_departments?ar.fam_departments.name:"—") + '</div>' +
       '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
       '<div class="k">Status</div><div>' + arPill(ar.status) + '</div>' +
+      ((ar.fam_purchase_requests && ar.fam_purchase_requests.length) ? '<div class="k">Converted to PR</div><div>' + ar.fam_purchase_requests.map(x => traceLink('prDetail', x.id, x.pr_number)).join(", ") + '</div>' : "") +
       (ar.dept_approved_at ? '<div class="k">Dept head approved</div><div>' + dstr(ar.dept_approved_at.slice(0,10)) + (ar.dept_approved_name ? ' · ' + h(ar.dept_approved_name) : "") + '</div>' : "") +
       (ar.budget_number ? '<div class="k">Budget approval #</div><div><strong>' + h(ar.budget_number) + '</strong></div>' : "") +
       (ar.budget_approved_at ? '<div class="k">Budget approved</div><div>' + dstr(ar.budget_approved_at.slice(0,10)) + (ar.budget_owner ? ' · ' + h(ar.budget_owner) : "") + '</div>' : "") +
@@ -820,19 +826,20 @@ async function prSave() {
 }
 async function prDetail(id) {
   try {
-    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_companies(name), fam_departments(name), fam_asset_requests(ar_number), fam_pr_items(*)").eq("id", id).single();
+    const { data: pr, error } = await sb.from("fam_purchase_requests").select("*, fam_companies(name), fam_departments(name), fam_asset_requests(id, ar_number), fam_pr_items(*), fam_purchase_orders(id, po_number)").eq("id", id).single();
     if (error) throw error;
     const items = pr.fam_pr_items || [];
     const tot = items.reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
     openModal(mhead("Request " + (pr.pr_number || "")) + companyLogoImg(pr.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(pr.fam_companies?pr.fam_companies.name:"—") + '</div>' +
-      (pr.fam_asset_requests ? '<div class="k">From asset request</div><div>' + h(pr.fam_asset_requests.ar_number) + '</div>' : "") +
+      (pr.fam_asset_requests ? '<div class="k">From asset request</div><div>' + traceLink('arDetail', pr.fam_asset_requests.id, pr.fam_asset_requests.ar_number) + '</div>' : "") +
       '<div class="k">Date</div><div>' + dstr(pr.request_date) + '</div>' +
       '<div class="k">Requested by</div><div>' + h(pr.requested_by || "—") + '</div>' +
       '<div class="k">Created by</div><div>' + h(pr.created_by_name || "—") + '</div>' +
       '<div class="k">Department</div><div>' + h(pr.fam_departments?pr.fam_departments.name:"—") + '</div>' +
       '<div class="k">Purpose</div><div>' + h(pr.purpose || "—") + '</div>' +
       '<div class="k">Status</div><div>' + pill(pr.status) + '</div>' +
+      ((pr.fam_purchase_orders && pr.fam_purchase_orders.length) ? '<div class="k">Converted to PO</div><div>' + pr.fam_purchase_orders.map(x => traceLink('poDetail', x.id, x.po_number)).join(", ") + '</div>' : "") +
       (pr.approved_by_name ? '<div class="k">Approved by</div><div>' + h(pr.approved_by_name) + '</div>' : "") +
       (pr.notes ? '<div class="k">Notes</div><div>' + h(pr.notes) + '</div>' : "") + '</div>' +
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
@@ -947,9 +954,9 @@ async function poSave() {
 }
 async function poDetail(id) {
   try {
-    const { data: po, error } = await sb.from("fam_purchase_orders").select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(*)").eq("id", id).single();
+    const { data: po, error } = await sb.from("fam_purchase_orders").select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(id, pr_number), fam_po_items(*)").eq("id", id).single();
     if (error) throw error;
-    const { data: assets } = await sb.from("fam_assets").select("id, po_item_id").eq("po_id", id);
+    const { data: assets } = await sb.from("fam_assets").select("id, asset_code, po_item_id").eq("po_id", id);
     const regByItem = {};
     (assets || []).forEach(a => regByItem[a.po_item_id] = (regByItem[a.po_item_id] || 0) + 1);
     const { data: receipts } = await sb.from("fam_receipts").select("*").eq("po_id", id);
@@ -959,7 +966,8 @@ async function poDetail(id) {
     const approved = ["ordered","partially_received","received"].includes(po.status);
     openModal(mhead("PO " + (po.po_number || "")) + companyLogoImg(po.company_id) +
       '<div class="kv"><div class="k">Company</div><div>' + h(po.fam_companies?po.fam_companies.name:"—") + '</div>' +
-      (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + h(po.fam_purchase_requests.pr_number) + '</div>' : "") +
+      (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + traceLink('prDetail', po.fam_purchase_requests.id, po.fam_purchase_requests.pr_number) + '</div>' : "") +
+      ((assets && assets.length) ? '<div class="k">Assets registered</div><div>' + assets.map(a => traceLink('assetDetail', a.id, a.asset_code)).join(", ") + '</div>' : "") +
       '<div class="k">Supplier</div><div>' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + '</div>' +
       '<div class="k">Date</div><div>' + dstr(po.po_date) + '</div>' +
       '<div class="k">Created by</div><div>' + h(po.created_by_name || "—") + '</div>' +
@@ -1208,7 +1216,7 @@ async function assetDetail(id) {
       '<div class="k">Status</div><div>' + pill(r.status) + '</div>' +
       '<div class="k">Company</div><div>' + h(r.company_name || "—") + '</div>' +
       '<div class="k">Category</div><div>' + h(r.category_name || "—") + '</div>' +
-      '<div class="k">From PO</div><div>' + h(r.po_number || "— (manual)") + '</div>' +
+      '<div class="k">From PO</div><div>' + (r.po_id ? traceLink('poDetail', r.po_id, r.po_number) : h(r.po_number || "— (manual)")) + '</div>' +
       '<div class="k">Supplier</div><div>' + h(r.supplier_name || "—") + '</div>' +
       '<div class="k">Serial / Model</div><div>' + h(r.serial_number || "—") + " / " + h(r.model || "—") + '</div>' +
       '<div class="k">Acquired</div><div>' + dstr(r.acquisition_date) + " · " + fmt(r.acquisition_cost) + '</div>' +
