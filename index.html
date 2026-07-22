@@ -627,6 +627,7 @@ async function arDetail(id) {
       '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
       '<div class="k">Status</div><div>' + arPill(ar.status) + '</div>' +
       (ar.dept_approved_at ? '<div class="k">Dept head approved</div><div>' + dstr(ar.dept_approved_at.slice(0,10)) + (ar.dept_approved_name ? ' · ' + h(ar.dept_approved_name) : "") + '</div>' : "") +
+      (ar.budget_number ? '<div class="k">Budget approval #</div><div><strong>' + h(ar.budget_number) + '</strong></div>' : "") +
       (ar.budget_approved_at ? '<div class="k">Budget approved</div><div>' + dstr(ar.budget_approved_at.slice(0,10)) + (ar.budget_owner ? ' · ' + h(ar.budget_owner) : "") + '</div>' : "") +
       (ar.budget_amount != null ? '<div class="k">Approved budget</div><div><strong>' + fmt(ar.budget_amount) + '</strong></div>' : "") +
       (ar.budget_source ? '<div class="k">Budget source</div><div>' + h(ar.budget_source) + '</div>' : "") +
@@ -682,13 +683,13 @@ async function vBudget() {
   const decided = (ars || []).filter(a => a.status !== "dept_approved");
   const estTot = a => (a.fam_ar_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
   const rowsHtml = (list, showBudget) => list.map(a =>
-    '<tr class="click" onclick="budgetDetail(' + a.id + ')"><td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(estTot(a)) + '</td>' + (showBudget ? '<td class="num">' + (a.budget_amount != null ? fmt(a.budget_amount) : "—") + '</td>' : "") + '<td>' + arPill(a.status) + '</td></tr>').join("");
+    '<tr class="click" onclick="budgetDetail(' + a.id + ')">' + (showBudget ? '<td><strong>' + h(a.budget_number || "—") + '</strong></td>' : "") + '<td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(estTot(a)) + '</td>' + (showBudget ? '<td class="num">' + (a.budget_amount != null ? fmt(a.budget_amount) : "—") + '</td>' : "") + '<td>' + arPill(a.status) + '</td></tr>').join("");
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Budget Approval</h2><p class="sub" style="margin:0">Step 2: Finance / Budget Owner confirms budget availability for department-approved requests</p></div></div>' +
     '<div class="card"><h3 style="margin:0 0 10px">Awaiting budget approval' + (pending.length ? ' (' + pending.length + ')' : '') + '</h3>' +
     (pending.length ? '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
       rowsHtml(pending, false) + '</tbody></table></div>' : '<div class="empty">Nothing awaiting budget approval.</div>') + '</div>' +
-    (decided.length ? '<div class="card"><h3 style="margin:0 0 10px">Recently decided</h3><div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th class="num">Approved budget</th><th>Status</th></tr></thead><tbody>' +
+    (decided.length ? '<div class="card"><h3 style="margin:0 0 10px">Recently decided</h3><div class="scroll"><table><thead><tr><th>Budget #</th><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th class="num">Approved budget</th><th>Status</th></tr></thead><tbody>' +
       rowsHtml(decided, true) + '</tbody></table></div></div>' : "");
 }
 async function budgetDetail(id) {
@@ -706,7 +707,8 @@ async function budgetDetail(id) {
       '<div class="k">Business need</div><div>' + h(ar.purpose || "—") + '</div>' +
       '<div class="k">Dept head approved</div><div>' + (ar.dept_approved_at ? dstr(ar.dept_approved_at.slice(0,10)) : "—") + '</div>' +
       '<div class="k">Estimated total</div><div><strong>' + fmt(tot) + '</strong></div>' +
-      '<div class="k">Status</div><div>' + arPill(ar.status) + '</div></div>' +
+      '<div class="k">Status</div><div>' + arPill(ar.status) + '</div>' +
+      (ar.budget_number ? '<div class="k">Budget approval #</div><div><strong>' + h(ar.budget_number) + '</strong></div>' : "") + '</div>' +
       '<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th><th class="num">Est. total</th></tr></thead><tbody>' +
       items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
