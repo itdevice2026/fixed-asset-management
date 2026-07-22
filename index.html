@@ -1245,7 +1245,7 @@ async function vAssets() {
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Assets</h2><p class="sub" style="margin:0">Asset register with live depreciation</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + deleteAllBtn('assets') + '</div>' +
-    '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:240px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
+    '<div class="bar"><input id="af_q" placeholder="Search code, name, brand, model, serial…" style="max-width:280px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
     (multiCompany() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
     '<select style="max-width:150px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
     ["active","under_repair","disposed","lost"].map(s => '<option value="' + s + '"' + (f.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select>' +
@@ -1256,13 +1256,13 @@ async function vAssets() {
 function renderAssetTable() {
   const f = S.assetFilter, q = (f.q || "").toLowerCase();
   const rows = REG_CACHE.filter(r =>
-    (!q || [r.asset_code, r.name, r.serial_number, r.model, r.po_number].some(x => (x || "").toLowerCase().includes(q))) &&
+    (!q || [r.asset_code, r.name, r.serial_number, r.brand, r.model, r.po_number].some(x => (x || "").toLowerCase().includes(q))) &&
     (!f.status || r.status === f.status) &&
     (!f.co || String(r.company_id) === String(f.co)) &&
     (!f.cat || String(r.category_id) === String(f.cat)));
   $("#assetTableWrap").innerHTML = rows.length ?
-    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Custodian</th><th>Status</th></tr></thead><tbody>' +
-    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Brand / Model</th><th>Serial</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Custodian</th><th>Status</th></tr></thead><tbody>' +
+    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h([r.brand, r.model].filter(Boolean).join(" / ") || "—") + '</td><td>' + h(r.serial_number || "—") + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
     '</tbody></table></div><div class="note">' + rows.length + ' asset(s) · Cost ' + fmt(rows.reduce((s, r) => s + +r.acquisition_cost, 0)) + ' · NBV ' + fmt(rows.reduce((s, r) => s + +r.net_book_value, 0)) + '</div>'
     : '<div class="empty">No assets match.</div>';
 }
@@ -1538,8 +1538,8 @@ function renderReport() {
   if (S.reportTab === "register") {
     const rows = REG_CACHE;
     b.innerHTML = '<div class="card"><div class="bar"><h3 style="margin:0">Full asset register</h3><div class="sp"></div><button class="btn2" onclick="expRegister()">Export CSV</button></div>' +
-      (rows.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Company</th><th>Category</th><th>PO #</th><th>Acquired</th><th class="num">Cost</th><th class="num">Monthly</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Status</th></tr></thead><tbody>' +
-      rows.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + h(r.po_number || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.monthly_depreciation) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+      (rows.length ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Brand / Model</th><th>Serial</th><th>Company</th><th>Category</th><th>PO #</th><th>Acquired</th><th class="num">Cost</th><th class="num">Monthly</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Status</th></tr></thead><tbody>' +
+      rows.map(r => '<tr><td>' + h(r.asset_code) + '</td><td>' + h(r.name) + '</td><td>' + h([r.brand, r.model].filter(Boolean).join(" / ") || "—") + '</td><td>' + h(r.serial_number || "—") + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + h(r.po_number || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.monthly_depreciation) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
       '</tbody></table></div>' : '<div class="empty">No assets.</div>') + '</div>';
   } else if (S.reportTab === "lapsing") {
     const y = S.lapsingYear || new Date().getFullYear();
@@ -1579,7 +1579,7 @@ function renderReport() {
 function expRegister() {
   downloadCSV("asset_register_" + today() + ".csv", [
     {label:"Asset Code",get:"asset_code"},{label:"Name",get:"name"},{label:"Company",get:"company_name"},{label:"Category",get:"category_name"},{label:"PO Number",get:"po_number"},
-    {label:"Supplier",get:"supplier_name"},{label:"Serial",get:"serial_number"},{label:"Acquisition Date",get:"acquisition_date"},{label:"Useful Life (months)",get:"useful_life_months"},
+    {label:"Supplier",get:"supplier_name"},{label:"Brand",get:"brand"},{label:"Model",get:"model"},{label:"Serial",get:"serial_number"},{label:"Acquisition Date",get:"acquisition_date"},{label:"Useful Life (months)",get:"useful_life_months"},
     {label:"Cost",get:"acquisition_cost"},{label:"Salvage",get:"salvage_value"},{label:"Monthly Depreciation",get:"monthly_depreciation"},
     {label:"Accumulated Depreciation",get:"accumulated_depreciation"},{label:"Accumulated Impairment",get:"accumulated_impairment"},{label:"Net Book Value",get:"net_book_value"},
     {label:"Location",get:"location_name"},{label:"Department",get:"department_name"},{label:"Custodian",get:"custodian_name"},{label:"Status",get:"status"},
