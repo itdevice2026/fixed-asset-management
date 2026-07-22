@@ -566,7 +566,7 @@ async function vAssetRequests() {
     .order("request_date", {ascending:false}).order("id", {ascending:false});
   if (error) throw error;
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Asset Requests</h2><p class="sub" style="margin:0">Independent module — requestor need → department head → budget approval. Each request is its own record.</p></div><div class="sp"></div>' +
+    '<div class="bar"><div><h2>Asset Requests</h2><p class="sub" style="margin:0">Step 1–2: requestor need → department head → budget approval → becomes a Purchase Requisition</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="arForm()">+ New asset request</button>' : '') + '</div>' +
     '<div class="card">' + (ars.length ?
       '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
@@ -640,6 +640,7 @@ async function arDetail(id) {
       '<button class="btn2" onclick="printTxn(\'ar\',' + ar.id + ')">Print</button>' +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
       (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
+      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
       (canDeleteTxn(ar, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'ar\',' + ar.id + ',' + JSON.stringify(ar.ar_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -728,6 +729,7 @@ async function budgetDetail(id) {
           (ar.budget_remarks ? '<div class="k">Remarks</div><div>' + h(ar.budget_remarks) + '</div>' : "") + '</div>' : "")) +
       '<div class="mfoot">' +
       (canAct ? '<button class="btn2 danger" onclick="budgetReject(' + ar.id + ')">Reject</button><button class="btn" onclick="budgetApprove(' + ar.id + ')">Confirm budget &amp; approve</button>' : "") +
+      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
@@ -770,7 +772,7 @@ async function vRequests() {
     .order("request_date", {ascending:false}).order("id", {ascending:false});
   if (error) throw error;
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Purchase Requests</h2><p class="sub" style="margin:0">Independent module — created and approved on its own record</p></div><div class="sp"></div>' +
+    '<div class="bar"><div><h2>Purchase Requests</h2><p class="sub" style="margin:0">Requests are the basis of purchase orders</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="prForm()">+ New request</button>' : '') + '</div>' +
     '<div class="card">' + (prs.length ?
       '<div class="scroll"><table><thead><tr><th>PR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
@@ -839,6 +841,7 @@ async function prDetail(id) {
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'pr\',' + pr.id + ')">Print</button>' +
       (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
+      (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
       (canDeleteTxn(pr, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'pr\',' + pr.id + ',' + JSON.stringify(pr.pr_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -884,7 +887,7 @@ async function vPOs() {
     (as || []).forEach(a => regByPO[a.po_id] = (regByPO[a.po_id] || 0) + 1);
   }
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">Independent module — created, approved, and received on its own record</p></div><div class="sp"></div>' +
+    '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">PO numbers auto-generate; assets are registered from received POs</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + '</div>' +
     '<div class="card">' + (pos.length ?
       '<div class="scroll"><table><thead><tr><th>PO #</th><th>PR #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
@@ -965,12 +968,13 @@ async function poDetail(id) {
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
       (po.status === "pending" ? '<div class="note" style="margin-top:8px">This PO is awaiting approval before it can be issued and received.</div>' : "") +
-      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th></th></tr></thead><tbody>' +
-      items.map(i => {
+      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
+      items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
-        return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td>' +
+        return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
         '<td class="right" style="white-space:nowrap">' +
-        (remRecv > 0 && approved && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') + '</td></tr>'; }).join("") +
+        (remRecv > 0 && approved && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
+        (rem > 0 && approved && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'po\',' + po.id + ')">Print</button>' +
@@ -1154,7 +1158,7 @@ async function vAssets() {
   const f = S.assetFilter;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Assets</h2><p class="sub" style="margin:0">Asset register with live depreciation</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="assetForm()">+ New asset</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + '</div>' +
     '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:240px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
     (multiCompany() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
     '<select style="max-width:150px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
