@@ -666,7 +666,7 @@ async function arDetail(id) {
       items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
-      '<button class="btn2" onclick="printTxn(\'ar\',' + ar.id + ')">Print</button>' +
+      '<button class="btn" onclick="printTxn(\'ar\',' + ar.id + ')">Print Record</button>' +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
       (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
       (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
@@ -869,7 +869,7 @@ async function prDetail(id) {
       items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
-      '<button class="btn2" onclick="printTxn(\'pr\',' + pr.id + ')">Print</button>' +
+      '<button class="btn" onclick="printTxn(\'pr\',' + pr.id + ')">Print Record</button>' +
       (pr.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="prSetStatus(' + pr.id + ',\'rejected\')">Reject</button><button class="btn" onclick="prSetStatus(' + pr.id + ',\'approved\')">Approve</button>' : "") +
       (pr.status === "approved" && P.prepare() ? '<button class="btn" onclick="prConvert(' + pr.id + ')">Convert to PO</button>' : "") +
       (canDeleteTxn(pr, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'pr\',' + pr.id + ',' + JSON.stringify(pr.pr_number || "") + ')">Delete</button>' : "") +
@@ -1037,7 +1037,7 @@ async function poDetail(id) {
         (rem > 0 && approved && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
-      '<button class="btn2" onclick="printTxn(\'po\',' + po.id + ')">Print</button>' +
+      '<button class="btn" onclick="printTxn(\'po\',' + po.id + ')">Print Record</button>' +
       (P.prepare() && po.status !== "cancelled" && !(receipts && receipts.length) && !(assets && assets.length) ? '<button class="btn2" onclick="poForm(' + po.id + ')">Edit</button>' : "") +
       (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
       (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue PO</button>' : "") +
@@ -1283,6 +1283,28 @@ function printAccountability() {
     '<p style="font-size:12px;margin-top:16px">I acknowledge accountability for the asset described above and undertake to use and safekeep it in accordance with company policy.</p>' +
     '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Custodian — signature over printed name</div><div class="sigline" style="flex:1">Issued by / Date</div></div>');
 }
+function printAssetRecord() {
+  const r = window._curAsset; if (!r) return;
+  const c = (S.refs.companies || []).find(x => String(x.id) === String(r.company_id));
+  const logo = c && c.logo_url ? '<img src="' + c.logo_url + '" alt="" style="height:40px">' : "";
+  const pct = r.useful_life_months ? Math.min(100, Math.round(r.months_depreciated / r.useful_life_months * 100)) : 0;
+  const grp = (title, rows) =>
+    '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#333;border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px">' + h(title) + '</div>' +
+    '<table style="width:100%;font-size:12.5px;border-collapse:collapse">' +
+    rows.map(x => '<tr><td style="padding:3px 12px 3px 0;color:#555;width:180px;vertical-align:top">' + h(x[0]) + '</td><td style="padding:3px 0;font-weight:600">' + h(x[1] == null || x[1] === "" ? "—" : x[1]) + '</td></tr>').join("") + '</table></div>';
+  printBlock(
+    '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #000;padding-bottom:8px">' + logo +
+      '<div><div style="font-size:18px;font-weight:800">Asset Record</div><div style="font-size:12px">' + h(c ? c.name : "") + '</div></div>' +
+      '<div style="margin-left:auto;text-align:right"><div style="font-size:22px;font-weight:800;font-family:ui-monospace,monospace">' + h(r.asset_code) + '</div><div style="font-size:11px;color:#555">Status: ' + h((r.status || "").replace(/_/g," ")) + '</div></div></div>' +
+    grp("Identification", [["Description", r.name],["Category", r.category_name],["Brand", r.brand],["Model", r.model],["Serial number", r.serial_number]]) +
+    grp("Acquisition", [["Purchase Order", r.po_number || "— (manual)"],["Supplier", r.supplier_name],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center]]) +
+    grp("Depreciation", [["Method", (r.depreciation_method || "straight_line").replace(/_/g," ")],["Useful life", r.useful_life_months + " months"],["Depreciation start", dstr(r.depreciation_start || r.acquisition_date)],["Salvage value", fmt(r.salvage_value)],["Monthly depreciation", fmt(r.monthly_depreciation)],["Depreciated", r.months_depreciated + " of " + r.useful_life_months + " months (" + pct + "%)"],["Accumulated depreciation", fmt(r.accumulated_depreciation)],["Accumulated impairment", fmt(r.accumulated_impairment)],["Net book value", fmt(r.net_book_value)]]) +
+    grp("Assignment", [["Location", r.location_name],["Department", r.department_name],["Custodian", r.custodian_name]]) +
+    (r.disposal_date ? grp("Disposal", [["Disposal date", dstr(r.disposal_date)],["Method", r.disposal_method],["Proceeds", fmt(r.disposal_proceeds)]]) : "") +
+    (r.notes ? grp("Notes / Specifications", [["", r.notes]]) : "") +
+    '<div style="display:flex;gap:50px;margin-top:48px"><div class="sigline" style="flex:1">Prepared by</div><div class="sigline" style="flex:1">Custodian</div><div class="sigline" style="flex:1">Verified by</div></div>' +
+    '<div style="font-size:10px;color:#888;margin-top:20px">Generated ' + dstr(today()) + ' · ' + h(r.asset_code) + '</div>');
+}
 async function assetDetail(id) {
   try {
     let r = REG_CACHE.find(x => x.id === id);
@@ -1310,7 +1332,7 @@ async function assetDetail(id) {
       (r.disposal_date ? '<div class="k">Disposed</div><div>' + dstr(r.disposal_date) + ' (' + h(r.disposal_method) + ')</div>' : "") +
       (r.notes ? '<div class="k">Notes</div><div>' + h(r.notes) + '</div>' : "") +
       '</div><div class="mfoot">' +
-      '<button class="btn2" onclick="printAssetTag()">Print tag</button><button class="btn2" onclick="printAccountability()">Accountability form</button>' +
+      '<button class="btn" onclick="printAssetRecord()">Asset Record</button><button class="btn2" onclick="printAssetTag()">Print tag</button><button class="btn2" onclick="printAccountability()">Accountability form</button>' +
       '<button class="btn2" onclick="maintLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Maintenance log</button>' +
       '<button class="btn2" onclick="impairLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Impairment / review</button>' +
       '<button class="btn2" onclick="docList(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Documents</button>' +
