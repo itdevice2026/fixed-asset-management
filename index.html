@@ -931,30 +931,45 @@ async function vPOs() {
 let poItemN = 0;
 function poItemRow(it) {
   it = it || {}; poItemN++;
-  return '<div class="itemrow" id="pi' + poItemN + '">' +
-    '<input placeholder="Item description" class="pi-desc" value="' + h(it.description || "") + '">' +
-    '<select class="pi-cat">' + opts(S.refs.categories, it.category_id, "Category…") + '</select>' +
-    '<input type="number" min="1" class="pi-qty" placeholder="Qty" value="' + (it.quantity || 1) + '">' +
-    '<input type="number" min="0" step="0.01" class="pi-cost" placeholder="Unit cost" value="' + (it.unit_cost != null ? it.unit_cost : "") + '">' +
-    '<button class="x" title="Remove" onclick="document.getElementById(\'pi' + poItemN + '\').remove()">&times;</button></div>';
+  return '<div class="itemrow" id="pi' + poItemN + '" style="display:block;border:1px solid var(--grid);border-radius:9px;padding:9px;margin-bottom:8px">' +
+    '<div style="display:grid;grid-template-columns:1fr 130px 62px 110px 30px;gap:8px;align-items:center">' +
+      '<input placeholder="Item description" class="pi-desc" value="' + h(it.description || "") + '">' +
+      '<select class="pi-cat">' + opts(S.refs.categories, it.category_id, "Category…") + '</select>' +
+      '<input type="number" min="1" class="pi-qty" placeholder="Qty" value="' + (it.quantity || 1) + '">' +
+      '<input type="number" min="0" step="0.01" class="pi-cost" placeholder="Unit cost" value="' + (it.unit_cost != null ? it.unit_cost : "") + '">' +
+      '<button class="x" title="Remove" onclick="document.getElementById(\'pi' + poItemN + '\').remove()">&times;</button></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">' +
+      '<input placeholder="Brand" class="pi-brand" value="' + h(it.brand || "") + '">' +
+      '<input placeholder="Model" class="pi-model" value="' + h(it.model || "") + '"></div></div>';
 }
-function poForm() {
+async function poForm(id) {
   poItemN = 0;
-  openModal(mhead("New purchase order") +
-    '<div class="frow"><div><label>Company</label>' + companyField("f_company", defaultCompany()) + '</div>' +
-    '<div><label>PO date</label><input type="date" id="f_po_date" value="' + today() + '"></div></div>' +
-    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(defaultCompany()), "", "Select supplier…") + '</select></div>' +
-    '<div><label>Status</label><select id="f_status"><option value="pending">Submit for approval</option><option value="draft">Draft</option></select></div></div>' +
-    '<div id="po_num_preview" class="note" style="margin-top:0"></div>' +
-    '<label>Line items</label><div id="poItems">' + poItemRow() + '</div>' +
+  let po = null, existingItems = [];
+  if (id) {
+    const { data, error } = await sb.from("fam_purchase_orders").select("*, fam_po_items(*)").eq("id", id).single();
+    if (error) return err(error);
+    po = data; existingItems = (po.fam_po_items || []).slice().sort((a,b)=>a.id-b.id);
+  }
+  const coDefault = po ? po.company_id : defaultCompany();
+  const itemsHtml = (existingItems.length ? existingItems : [null]).map(it => poItemRow(it || undefined)).join("");
+  const statusOpts = po
+    ? '<option value="' + h(po.status) + '" selected>' + h(po.status) + '</option>'
+    : '<option value="pending">Submit for approval</option><option value="draft">Draft</option>';
+  openModal(mhead(id ? "Edit PO " + (po.po_number || "") : "New purchase order") +
+    '<div class="frow"><div><label>Company</label>' + companyField("f_company", coDefault) + '</div>' +
+    '<div><label>PO date</label><input type="date" id="f_po_date" value="' + (po ? po.po_date : today()) + '"></div></div>' +
+    '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(coDefault), po ? po.supplier_id : "", "Select supplier…") + '</select></div>' +
+    '<div><label>Status</label>' + (id ? '<input value="' + h(po.status) + '" disabled><input type="hidden" id="f_status" value="' + h(po.status) + '">' : '<select id="f_status">' + statusOpts + '</select>') + '</div></div>' +
+    (id ? '' : '<div id="po_num_preview" class="note" style="margin-top:0"></div>') +
+    '<label>Line items <span class="note" style="font-weight:400">— enter Brand &amp; Model of each asset</span></label><div id="poItems">' + itemsHtml + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
-    '<label>Notes</label><textarea id="f_notes" rows="2"></textarea>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave()">Save PO</button></div>', true);
-  wirePreview("po", "f_company", "f_po_date", "po_num_preview");
+    '<label>Notes</label><textarea id="f_notes" rows="2">' + (po ? h(po.notes || "") : "") + '</textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave(' + (id || "null") + ')">' + (id ? "Save changes" : "Save PO") + '</button></div>', true);
+  if (!id) wirePreview("po", "f_company", "f_po_date", "po_num_preview");
   const coEl = $("#f_company");
   if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("f_supplier"); const el = $("#f_supplier"); if (el) el.innerHTML = opts(suppliersFor(val("f_company")), cur, "Select supplier…"); });
 }
-async function poSave() {
+async function poSave(id) {
   const company_id = val("f_company");
   if (!company_id) return toast("Select a company", true);
   const items = $$("#poItems .itemrow").map(r => ({
@@ -962,17 +977,31 @@ async function poSave() {
     category_id: $(".pi-cat", r).value || null,
     quantity: Number($(".pi-qty", r).value || 1),
     unit_cost: Number($(".pi-cost", r).value || 0),
+    brand: $(".pi-brand", r) ? ($(".pi-brand", r).value.trim() || null) : null,
+    model: $(".pi-model", r) ? ($(".pi-model", r).value.trim() || null) : null,
   })).filter(i => i.description);
   if (!items.length) return toast("Add at least one line item", true);
   try {
-    const { data: po, error } = await sb.from("fam_purchase_orders").insert(stamp({
-      company_id, po_date: val("f_po_date") || today(),
-      supplier_id: val("f_supplier") || null, status: val("f_status"), notes: val("f_notes") || null
-    })).select().single();
-    if (error) throw error;
-    const { error: e2 } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: po.id })));
-    if (e2) throw e2;
-    closeModal(); toast("PO " + (po.po_number || "") + " saved"); go("pos");
+    if (id) {
+      const { error: eu } = await sb.from("fam_purchase_orders").update({
+        company_id, po_date: val("f_po_date") || today(), supplier_id: val("f_supplier") || null, notes: val("f_notes") || null
+      }).eq("id", id);
+      if (eu) throw eu;
+      const { error: ed } = await sb.from("fam_po_items").delete().eq("po_id", id);
+      if (ed) throw ed;
+      const { error: ei } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: id })));
+      if (ei) throw ei;
+      closeModal(); toast("PO updated"); poDetail(id); if (S.view === "pos") vPOs();
+    } else {
+      const { data: po, error } = await sb.from("fam_purchase_orders").insert(stamp({
+        company_id, po_date: val("f_po_date") || today(),
+        supplier_id: val("f_supplier") || null, status: val("f_status"), notes: val("f_notes") || null
+      })).select().single();
+      if (error) throw error;
+      const { error: e2 } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: po.id })));
+      if (e2) throw e2;
+      closeModal(); toast("PO " + (po.po_number || "") + " saved"); go("pos");
+    }
   } catch (e) { err(e); }
 }
 async function poDetail(id) {
@@ -999,16 +1028,17 @@ async function poDetail(id) {
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
       (po.status === "pending" ? '<div class="note" style="margin-top:8px">This PO is awaiting approval before it can be issued and received.</div>' : "") +
-      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
+      '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Brand / Model</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
-        return '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
+        return '<tr><td>' + h(i.description) + '</td><td>' + h([i.brand, i.model].filter(Boolean).join(" / ") || "—") + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td><td class="num">' + recv + ' / ' + i.quantity + '</td><td class="num">' + reg + ' / ' + i.quantity + '</td>' +
         '<td class="right" style="white-space:nowrap">' +
         (remRecv > 0 && approved && P.prepare() ? '<button class="btn3" onclick="receiveForm(' + po.id + ',' + i.id + ')">Receive ' + remRecv + '</button> ' : '') +
         (rem > 0 && approved && P.prepare() ? '<button class="btn3" onclick="registerForm(' + po.id + ',' + i.id + ')">Register ' + rem + '</button>' : '') + '</td></tr>'; }).join("") +
       '</tbody></table></div>' +
       '<div class="mfoot">' +
       '<button class="btn2" onclick="printTxn(\'po\',' + po.id + ')">Print</button>' +
+      (P.prepare() && po.status !== "cancelled" && !(receipts && receipts.length) && !(assets && assets.length) ? '<button class="btn2" onclick="poForm(' + po.id + ')">Edit</button>' : "") +
       (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
       (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue PO</button>' : "") +
       (po.status === "draft" && P.prepare() ? '<button class="btn" onclick="poStatus(' + po.id + ',\'pending\')">Submit for approval</button>' : "") +
@@ -1042,9 +1072,11 @@ async function registerForm(poId, itemId) {
     const rem = item.quantity - (count || 0);
     const cat = (S.refs.categories || []).find(c => c.id === item.category_id);
     const parent = item.fam_purchase_orders || {};
+    window._regItem = item;
     openModal(mhead("Register assets — " + item.description) +
+      ((item.brand || item.model) ? '<div class="note" style="margin-top:0">Brand / Model: <strong>' + h([item.brand, item.model].filter(Boolean).join(" / ")) + '</strong> (carried onto each asset)</div>' : "") +
       '<div class="frow3">' +
-      '<div><label>Quantity</label><input type="number" id="r_qty" min="1" max="' + rem + '" value="' + rem + '"></div>' +
+      '<div><label>Quantity</label><input type="number" id="r_qty" min="1" max="' + rem + '" value="' + rem + '" oninput="renderRegUnits()"></div>' +
       '<div><label>Acquisition date</label><input type="date" id="r_date" value="' + today() + '"></div>' +
       '<div><label>Depreciation start</label><input type="date" id="r_dep" value="' + today() + '"></div></div>' +
       '<div class="frow"><div><label>Unit cost</label><input type="number" id="r_cost" step="0.01" value="' + item.unit_cost + '"></div>' +
@@ -1055,16 +1087,39 @@ async function registerForm(poId, itemId) {
       '<div><label>Custodian</label><select id="r_cust">' + opts(employeesFor(parent.company_id), "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Cost center</label><input id="r_costcenter" placeholder="e.g. Admin-101"></div>' +
       '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
+      '<label>Per-unit details <span class="note" style="font-weight:400">— serial number &amp; specifications for each unit (recommended for IT equipment)</span></label>' +
+      '<div id="r_units"></div>' +
       '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…). Depreciation is auto-computed straight-line.</div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
+    renderRegUnits();
   } catch (e) { err(e); }
+}
+function renderRegUnits() {
+  const c = $("#r_units"); if (!c) return;
+  const n = Math.max(0, Math.min(200, Number(val("r_qty") || 0)));
+  const prevS = $$("#r_units .u-serial").map(x => x.value);
+  const prevP = $$("#r_units .u-spec").map(x => x.value);
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    html += '<div style="display:grid;grid-template-columns:66px 1fr 1fr;gap:8px;align-items:center;margin-bottom:6px">' +
+      '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
+      '<input class="u-serial" placeholder="Serial number" value="' + h(prevS[i] || "") + '">' +
+      '<input class="u-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(prevP[i] || "") + '"></div>';
+  }
+  c.innerHTML = html || '<div class="empty">Set a quantity above.</div>';
 }
 async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
   const qty = Number(val("r_qty") || 0);
   if (qty < 1) return toast("Quantity must be at least 1", true);
+  const ri = window._regItem || {};
+  const serials = $$("#r_units .u-serial").map(x => x.value.trim());
+  const specs = $$("#r_units .u-spec").map(x => x.value.trim());
   const rows = [];
   for (let i = 0; i < qty; i++) rows.push({
     name, po_id: poId, po_item_id: itemId, supplier_id: supplierId, company_id: companyId, category_id: catId,
+    brand: ri.brand || null, model: ri.model || null,
+    serial_number: serials[i] || null,
+    notes: specs[i] || null,
     acquisition_date: val("r_date") || today(),
     depreciation_start: val("r_dep") || val("r_date") || today(),
     acquisition_cost: Number(val("r_cost") || 0),
@@ -1163,7 +1218,7 @@ async function printTxn(kind, id) {
     if (kind === "ar") approvedBy = t.budget_owner || t.dept_approved_name || "";
     else if (kind === "pr") approvedBy = t.approved_by_name || "";
     else if (kind === "po") approvedBy = (t.fam_purchase_requests ? t.fam_purchase_requests.approved_by_name : "") || "";
-    const rows = items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td style="text-align:right">' + i.quantity + '</td><td style="text-align:right">' + fmt(i[cfg.cost]) + '</td><td style="text-align:right">' + fmt(i.quantity * Number(i[cfg.cost] || 0)) + '</td></tr>').join("") || '<tr><td colspan="5">No items.</td></tr>';
+    const rows = items.map(i => '<tr><td>' + h(i.description) + ((i.brand || i.model) ? ' <span style="color:#555">(' + h([i.brand, i.model].filter(Boolean).join(" / ")) + ')</span>' : '') + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td style="text-align:right">' + i.quantity + '</td><td style="text-align:right">' + fmt(i[cfg.cost]) + '</td><td style="text-align:right">' + fmt(i.quantity * Number(i[cfg.cost] || 0)) + '</td></tr>').join("") || '<tr><td colspan="5">No items.</td></tr>';
     printBlock(
       logo + '<h2 style="margin:8px 0 2px">' + cfg.title + '</h2>' +
       '<div style="font-size:13px;margin-bottom:4px"><strong>' + h(co.name || "") + '</strong></div>' +
@@ -1221,7 +1276,7 @@ function printAccountability() {
   const r = window._curAsset; if (!r) return;
   const c = (S.refs.companies || []).find(x => String(x.id) === String(r.company_id));
   const logo = c && c.logo_url ? '<img src="' + c.logo_url + '" alt="">' : "";
-  const rowsD = [["Company", c ? c.name : ""],["Asset code", r.asset_code],["Description", r.name],["Category", r.category_name || ""],["Serial / Model", (r.serial_number || "—") + " / " + (r.model || "—")],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center || "—"],["Department", r.department_name || "—"],["Location", r.location_name || "—"],["Custodian", r.custodian_name || "—"]];
+  const rowsD = [["Company", c ? c.name : ""],["Asset code", r.asset_code],["Description", r.name],["Category", r.category_name || ""],["Brand / Model", ([r.brand, r.model].filter(Boolean).join(" / ") || "—")],["Serial number", (r.serial_number || "—")],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center || "—"],["Department", r.department_name || "—"],["Location", r.location_name || "—"],["Custodian", r.custodian_name || "—"]];
   printBlock(logo + '<h2 style="margin:8px 0 2px">Asset Accountability Form</h2>' +
     '<table style="font-size:13px;border-collapse:collapse;margin-top:6px">' +
     rowsD.map(x => '<tr><td style="padding:4px 12px;color:#555;width:190px">' + h(x[0]) + '</td><td style="padding:4px 12px;font-weight:600">' + h(x[1]) + '</td></tr>').join("") + '</table>' +
@@ -1241,7 +1296,8 @@ async function assetDetail(id) {
       '<div class="k">Category</div><div>' + h(r.category_name || "—") + '</div>' +
       '<div class="k">From PO</div><div>' + (r.po_id ? traceLink('poDetail', r.po_id, r.po_number) : h(r.po_number || "— (manual)")) + '</div>' +
       '<div class="k">Supplier</div><div>' + h(r.supplier_name || "—") + '</div>' +
-      '<div class="k">Serial / Model</div><div>' + h(r.serial_number || "—") + " / " + h(r.model || "—") + '</div>' +
+      '<div class="k">Brand / Model</div><div>' + h([r.brand, r.model].filter(Boolean).join(" / ") || "—") + '</div>' +
+      '<div class="k">Serial number</div><div>' + h(r.serial_number || "—") + '</div>' +
       '<div class="k">Acquired</div><div>' + dstr(r.acquisition_date) + " · " + fmt(r.acquisition_cost) + '</div>' +
       '<div class="k">Cost center</div><div>' + h(r.cost_center || "—") + '</div>' +
       '<div class="k">Depreciation</div><div>' + fmt(r.monthly_depreciation) + '/mo · ' + h((r.depreciation_method || "straight_line").replace(/_/g," ")) + ' · ' + r.months_depreciated + ' of ' + r.useful_life_months + ' months (' + pct + '%)</div>' +
@@ -1278,8 +1334,9 @@ async function assetForm(id) {
     '<div><label>Salvage value</label><input type="number" step="0.01" id="a_salvage" value="' + (a.salvage_value != null ? a.salvage_value : 0) + '"></div></div>' +
     '<div class="frow"><div><label>Cost center</label><input id="a_costcenter" value="' + h(a.cost_center || "") + '"></div>' +
     '<div><label>Depreciation method</label><select id="a_depmethod">' + depMethodOpts(a.depreciation_method || "straight_line") + '</select></div></div>' +
-    '<div class="frow"><div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div>' +
-    '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div></div>' +
+    '<div class="frow3"><div><label>Brand</label><input id="a_brand" value="' + h(a.brand || "") + '"></div>' +
+    '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div>' +
+    '<div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(suppliersFor(a.company_id != null ? a.company_id : defaultCompany()), a.supplier_id, "—") + '</select></div>' +
     '<div><label>Custodian</label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
     '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
@@ -1306,7 +1363,7 @@ async function assetSave(id) {
     acquisition_date: val("a_date"), depreciation_start: val("a_dep") || null,
     acquisition_cost: Number(val("a_cost") || 0), useful_life_months: Number(val("a_life") || 60),
     salvage_value: Number(val("a_salvage") || 0),
-    serial_number: val("a_serial") || null, model: val("a_model") || null,
+    serial_number: val("a_serial") || null, model: val("a_model") || null, brand: val("a_brand") || null,
     supplier_id: val("a_supplier") || null, status: val("a_status"),
     location_id: val("a_loc") || null, department_id: val("a_dept") || null, custodian_id: val("a_cust") || null,
     cost_center: val("a_costcenter") || null, depreciation_method: val("a_depmethod") || "straight_line",
