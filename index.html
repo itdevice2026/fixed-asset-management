@@ -304,17 +304,27 @@ const TXN_DEL = {
 };
 function askDeleteTxn(kind, id, num) {
   const cfg = TXN_DEL[kind]; if (!cfg) return;
-  const cascade = P.admin() ? " If it has been converted, ALL linked transactions downstream (Purchase Requisition, Purchase Order, and any registered assets with their transfers/disposals/records) will also be permanently deleted." : "";
-  confirmModal("Delete " + cfg.label + (num ? " " + num : ""),
-    "This permanently removes the " + cfg.label + " and its line items. This cannot be undone." + cascade,
-    "Delete", () => txnDelete(kind, id));
+  const cascade = P.admin() ? '<div class="note" style="color:var(--critical);margin-top:8px">If this has been converted, ALL linked transactions downstream (Purchase Requisition, Purchase Order, and any registered assets with their transfers/disposals/records) will also be permanently deleted.</div>' : '';
+  openModal(mhead("Delete " + cfg.label + (num ? " " + num : "")) +
+    '<p style="margin:0 0 4px;color:var(--ink-2)">This permanently removes the ' + cfg.label + ' and its line items. This cannot be undone.</p>' +
+    cascade +
+    '<label>Reason for deletion <span style="color:var(--critical)">*</span></label>' +
+    '<textarea id="del_reason" rows="3" placeholder="Why is this being deleted? (required — recorded in the Delete Log)"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn" style="background:var(--critical);color:#fff" onclick="txnDelete(\'' + kind + '\',' + id + ',' + JSON.stringify(num || "") + ')">Delete</button></div>');
 }
-async function txnDelete(kind, id) {
+async function txnDelete(kind, id, num) {
   const cfg = TXN_DEL[kind]; if (!cfg) return;
+  const reason = ((val("del_reason") || "")).trim();
+  if (!reason) return toast("Please enter a reason for deletion.", true);
   try {
     const { data, error } = await sb.from(cfg.table).delete().eq("id", id).select("id");
     if (error) throw error;
     if (!data || !data.length) return toast("You can only delete your own pending transactions.", true);
+    // audit log (best-effort — the record is already gone)
+    try {
+      await sb.from("fam_delete_log").insert({ table_name: cfg.table, kind: kind, record_id: id, record_number: num || null, reason: reason, deleted_by_name: meName() });
+    } catch (le) { console.error("delete log failed", le); }
     closeModal(); toast(cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1) + " deleted");
     try { cfg.refresh(); } catch (e) {}
   } catch (e) {
@@ -322,6 +332,18 @@ async function txnDelete(kind, id) {
       return toast("Cannot delete — it has linked records (converted or received). Cancel it instead.", true);
     err(e);
   }
+}
+/* ================= DELETE LOG (audit) ================= */
+async function vDeleteLog() {
+  const { data: logs, error } = await sb.from("fam_delete_log").select("*").order("deleted_at", {ascending:false}).limit(500);
+  if (error) throw error;
+  const kindLabel = { ar:"Asset Request", pr:"Purchase Requisition", po:"Purchase Order", disp:"Disposal" };
+  $("#main").innerHTML =
+    '<div class="bar"><div><h2>Delete Log</h2><p class="sub" style="margin:0">Audit trail of deleted transactions — who deleted what, when, and why</p></div></div>' +
+    '<div class="card">' + ((logs && logs.length) ?
+      '<div class="scroll"><table><thead><tr><th>Deleted at</th><th>Type</th><th>Transaction #</th><th>Reason</th><th>Deleted by</th></tr></thead><tbody>' +
+      logs.map(l => '<tr><td style="white-space:nowrap">' + h(dstr((l.deleted_at||"").slice(0,10))) + ' ' + h((l.deleted_at||"").slice(11,16)) + '</td><td>' + h(kindLabel[l.kind] || l.kind || l.table_name || "—") + '</td><td><strong>' + h(l.record_number || ("#" + l.record_id)) + '</strong></td><td>' + h(l.reason || "—") + '</td><td>' + h(l.deleted_by_name || "—") + '</td></tr>').join("") +
+      '</tbody></table></div><div class="note">' + logs.length + ' deletion(s) logged' + (logs.length === 500 ? ' (showing latest 500)' : '') + '</div>' : '<div class="empty">No deletions have been logged yet.</div>') + '</div>';
 }
 /* company field: admin picks; scoped user is fixed to their company */
 function multiCompany() { return (S.refs.companies || []).length > 1; }
@@ -499,6 +521,7 @@ const VIEWS = [
   ["reports","Reports",()=>true],
   ["setup","Setup",()=>P.ref()],
   ["users","Users",()=>P.admin()],
+  ["deletelog","Delete Log",()=>P.approve()],
 ];
 function renderNav() {
   $("#nav").innerHTML = VIEWS.filter(v => v[2]()).map(v =>
@@ -508,7 +531,7 @@ async function go(v) {
   S.view = v; renderNav();
   $("#main").innerHTML = '<p class="sub">Loading…</p>';
   const fn = { dashboard:vDashboard, arequests:vAssetRequests, budget:vBudget, requests:vRequests, pos:vPOs, assets:vAssets, transfers:vTransfers,
-    disposals:vDisposals, counts:vCounts, reports:vReports, setup:vSetup, users:vUsers }[v];
+    disposals:vDisposals, counts:vCounts, reports:vReports, setup:vSetup, users:vUsers, deletelog:vDeleteLog }[v];
   try { await fn(); }
   catch (e) { err(e); $("#main").innerHTML = '<div class="card empty">Could not load. Refresh and try again.</div>'; }
 }
