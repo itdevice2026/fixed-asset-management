@@ -595,7 +595,7 @@ async function vAssetRequests() {
   if (error) throw error;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Asset Requests</h2><p class="sub" style="margin:0">Step 1–2: requestor need → department head → budget approval → becomes a Purchase Requisition</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="arForm()">+ New asset request</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="arForm()">+ New asset request</button>' : '') + deleteAllBtn('arequests') + '</div>' +
     '<div class="card">' + (ars.length ?
       '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
       ars.map(a => { const items = a.fam_ar_items || [];
@@ -802,7 +802,7 @@ async function vRequests() {
   if (error) throw error;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Purchase Requests</h2><p class="sub" style="margin:0">Requests are the basis of purchase orders</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="prForm()">+ New request</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="prForm()">+ New request</button>' : '') + deleteAllBtn('requests') + '</div>' +
     '<div class="card">' + (prs.length ?
       '<div class="scroll"><table><thead><tr><th>PR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
       prs.map(p => { const items = p.fam_pr_items || [];
@@ -918,7 +918,7 @@ async function vPOs() {
   }
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Purchase Orders</h2><p class="sub" style="margin:0">PO numbers auto-generate; assets are registered from received POs</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="poForm()">+ New PO</button>' : '') + deleteAllBtn('pos') + '</div>' +
     '<div class="card">' + (pos.length ?
       '<div class="scroll"><table><thead><tr><th>PO #</th><th>PR #</th><th>Date</th><th>Company</th><th>Supplier</th><th class="num">Items</th><th class="num">Total</th><th class="num">Registered</th><th>Status</th></tr></thead><tbody>' +
       pos.map(p => { const items = p.fam_po_items || [];
@@ -1189,7 +1189,7 @@ async function vAssets() {
   const f = S.assetFilter;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Assets</h2><p class="sub" style="margin:0">Asset register with live depreciation</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn2" onclick="assetForm()">+ Add manually</button>' : '') + deleteAllBtn('assets') + '</div>' +
     '<div class="bar"><input id="af_q" placeholder="Search code, name, serial…" style="max-width:240px" value="' + h(f.q) + '" oninput="S.assetFilter.q=this.value;renderAssetTable()">' +
     (multiCompany() ? '<select style="max-width:190px" onchange="S.assetFilter.co=this.value;renderAssetTable()">' + opts(S.refs.companies, f.co, "All companies") + '</select>' : '') +
     '<select style="max-width:150px" onchange="S.assetFilter.status=this.value;renderAssetTable()"><option value="">All statuses</option>' +
@@ -1333,7 +1333,7 @@ async function vTransfers() {
   window._activeAssets = (assets || []).filter(a => a.status === "active" || a.status === "under_repair");
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement between locations, departments, and custodians</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="transferForm()">+ New transfer</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="transferForm()">+ New transfer</button>' : '') + deleteAllBtn('transfers') + '</div>' +
     '<div class="card">' + ((tr && tr.length) ?
       '<div class="scroll"><table><thead><tr><th>Transfer #</th><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Reason</th></tr></thead><tbody>' +
       tr.map(t => '<tr><td><strong>' + h(t.transfer_number || "—") + '</strong></td><td>' + dstr(t.transfer_date) + '</td><td>' + h(an[t.asset_id] || "#" + t.asset_id) + '</td>' +
@@ -1403,7 +1403,7 @@ async function vDisposals() {
   const an = {}; (assets || []).forEach(a => an[a.id] = a.asset_code + " — " + a.name);
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Disposals</h2><p class="sub" style="margin:0">Disposals are prepared, then approved before the asset is retired</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="disposeForm()">+ Prepare disposal</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="disposeForm()">+ Prepare disposal</button>' : '') + deleteAllBtn('disposals') + '</div>' +
     '<div class="card">' + ((dis && dis.length) ?
       '<div class="scroll"><table><thead><tr><th>Disposal #</th><th>Date</th><th>Asset</th><th>Method</th><th class="num">Book value</th><th class="num">Proceeds</th><th class="num">Gain / (loss)</th><th>Prepared by</th><th>Approval</th><th>Approved by</th><th></th></tr></thead><tbody>' +
       dis.map(d => { const gl = Number(d.gain_loss || 0);
@@ -1669,6 +1669,47 @@ async function doResetTxns() {
     if (typeof REG_CACHE !== "undefined") REG_CACHE = [];
     toast("Reset complete — " + ((d.asset_requests||0)+(d.purchase_requests||0)+(d.purchase_orders||0)+(d.assets||0)+(d.count_sessions||0)) + " records cleared. Database is fresh.");
     go("dashboard");
+  } catch (e) { err(e); }
+}
+/* ===== Per-module "Delete all" (admin only) ===== */
+const DELETE_ALL_NOTE = {
+  arequests: "This also deletes any linked Purchase Requisitions, Purchase Orders, and assets registered from them.",
+  requests:  "This also deletes any linked Purchase Orders and assets registered from them.",
+  pos:       "This also deletes any assets registered from these POs and their receiving records.",
+  assets:    "This also deletes related transfers, disposals, maintenance and impairment records, and documents.",
+  transfers: "",
+  disposals: "Note: this removes disposal records only; assets already retired stay retired.",
+  counts:    "This also deletes the count lines within each session.",
+};
+function deleteAllBtn(module) {
+  return P.admin() ? '<button class="btn2" style="border-color:var(--critical);color:var(--critical)" onclick="askDeleteAll(\'' + module + '\')">Delete all</button>' : '';
+}
+function askDeleteAll(module) {
+  if (!P.admin()) return toast("Only an administrator can delete all records", true);
+  const labels = { arequests:"Asset Requests", requests:"Purchase Requisitions", pos:"Purchase Orders", assets:"Assets", transfers:"Transfers", disposals:"Disposals", counts:"Inventory Count sessions" };
+  const label = labels[module] || module;
+  const note = DELETE_ALL_NOTE[module] || "";
+  openModal(mhead("Delete ALL — " + label) +
+    '<p style="margin:0 0 8px;color:var(--critical);font-weight:600">This permanently deletes every record in ' + h(label) + '. This cannot be undone.</p>' +
+    (note ? '<div class="note" style="color:var(--critical);margin-bottom:8px">' + h(note) + '</div>' : '') +
+    '<label>Type <strong>DELETE</strong> to confirm</label><input id="da_confirm" placeholder="DELETE">' +
+    '<label>Reason (required — recorded in the Delete Log) <span style="color:var(--critical)">*</span></label>' +
+    '<textarea id="da_reason" rows="2"></textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn" style="background:var(--critical);color:#fff" onclick="doDeleteAll(\'' + module + '\')">Delete all</button></div>');
+}
+async function doDeleteAll(module) {
+  if ((val("da_confirm") || "").trim().toUpperCase() !== "DELETE") return toast('Type DELETE to confirm.', true);
+  const reason = (val("da_reason") || "").trim();
+  if (!reason) return toast("A reason is required.", true);
+  try {
+    const { data, error } = await sb.rpc("fam_delete_all", { p_module: module, p_reason: reason });
+    if (error) throw error;
+    const d = data || {};
+    closeModal();
+    if (typeof REG_CACHE !== "undefined") REG_CACHE = [];
+    toast((d.label || "Records") + " cleared — " + (d.deleted || 0) + " deleted");
+    go(module);
   } catch (e) { err(e); }
 }
 function renderSetupTabs() {
@@ -1997,7 +2038,7 @@ async function vCounts() {
   if (error) throw error;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Inventory Count</h2><p class="sub" style="margin:0">Physical count sessions reconciled against the asset register</p></div><div class="sp"></div>' +
-    (P.prepare() ? '<button class="btn" onclick="countForm()">+ New count session</button>' : '') + '</div>' +
+    (P.prepare() ? '<button class="btn" onclick="countForm()">+ New count session</button>' : '') + deleteAllBtn('counts') + '</div>' +
     '<div class="card">' + ((sess && sess.length) ?
       '<div class="scroll"><table><thead><tr><th>Count #</th><th>Date</th><th>Session</th><th>Company</th><th>Status</th><th></th></tr></thead><tbody>' +
       sess.map(s => '<tr class="click" onclick="countDetail(' + s.id + ')"><td><strong>' + h(s.count_number || "—") + '</strong></td><td>' + dstr(s.count_date) + '</td><td><strong>' + h(s.name || "Count") + '</strong></td><td>' + h(refName(S.refs.companies, s.company_id)) + '</td><td>' + pill(s.status) + '</td><td class="right">' + h(s.notes || "") + '</td></tr>').join("") +
