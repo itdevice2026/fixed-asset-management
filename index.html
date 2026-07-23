@@ -994,29 +994,41 @@ async function poForm(id, fromPr) {
     const { data, error } = await sb.from("fam_purchase_requests").select("*, fam_pr_items(*)").eq("id", fromPr).single();
     if (error) return err(error);
     pr = data;
-    existingItems = (pr.fam_pr_items || []).slice().sort((a,b)=>a.id-b.id).map(i => ({
-      description: i.description, category_id: i.category_id, quantity: i.quantity, unit_cost: i.estimated_unit_cost, brand: "", model: ""
+    // PR items are kept as reference only — the PO is entered fresh per the supplier proposal
+    window._prRefItems = (pr.fam_pr_items || []).slice().sort((a,b)=>a.id-b.id).map(i => ({
+      description: i.description, category_id: i.category_id, quantity: i.quantity, unit_cost: i.estimated_unit_cost
     }));
-  }
+  } else { window._prRefItems = null; }
   const coDefault = po ? po.company_id : (pr ? pr.company_id : defaultCompany());
   const itemsHtml = (existingItems.length ? existingItems : [null]).map(it => poItemRow(it || undefined)).join("");
   const statusOpts = po
     ? '<option value="' + h(po.status) + '" selected>' + h(po.status) + '</option>'
     : '<option value="pending">Submit for approval</option><option value="draft">Draft</option>';
+  const prRefPanel = pr ? '<div class="card" style="margin:8px 0;background:var(--page)"><div style="font-weight:600;font-size:12.5px;margin-bottom:6px">Requested items — from ' + h(pr.pr_number || "") + ' (reference only)</div>' +
+    '<div class="scroll"><table><thead><tr><th>Item requested</th><th>Category</th><th class="num">Qty</th><th class="num">Est. unit cost</th></tr></thead><tbody>' +
+    (window._prRefItems || []).map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.unit_cost) + '</td></tr>').join("") +
+    '</tbody></table></div><button class="mini" style="margin-top:8px" onclick="copyRequestedItems()">Copy requested items into the order ↓</button></div>' : "";
   openModal(mhead(id ? "Edit PO " + (po.po_number || "") : (pr ? "Create PO from " + (pr.pr_number || "request") : "New purchase order")) +
-    (pr ? '<div class="note" style="margin-top:0;color:var(--accent)">From approved request <strong>' + h(pr.pr_number || "") + '</strong> — enter the proper asset description, brand &amp; model, and supplier for each item.</div>' : "") +
+    (pr ? '<div class="note" style="margin-top:0;color:var(--accent)">Enter the full order per the <strong>supplier\'s proposal / quotation</strong> — descriptions, brand, model, quantities and unit costs may differ from the request. The requested items are shown below for reference.</div>' : "") +
     '<div class="frow"><div><label>Company</label>' + companyField("f_company", coDefault) + '</div>' +
     '<div><label>PO date</label><input type="date" id="f_po_date" value="' + (po ? po.po_date : today()) + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="f_supplier">' + opts(suppliersFor(coDefault), po ? po.supplier_id : "", "Select supplier…") + '</select></div>' +
     '<div><label>Status</label>' + (id ? '<input value="' + h(po.status) + '" disabled><input type="hidden" id="f_status" value="' + h(po.status) + '">' : '<select id="f_status">' + statusOpts + '</select>') + '</div></div>' +
+    '<div class="frow"><div><label>Supplier quotation / proposal ref</label><input id="f_supplier_ref" placeholder="e.g. Quote #, proposal date" value="' + h(po ? (po.supplier_ref || "") : "") + '"></div><div></div></div>' +
     (id ? '' : '<div id="po_num_preview" class="note" style="margin-top:0"></div>') +
-    '<label>Line items <span class="note" style="font-weight:400">— enter Brand &amp; Model of each asset</span></label><div id="poItems">' + itemsHtml + '</div>' +
+    prRefPanel +
+    '<label>Order line items <span class="note" style="font-weight:400">— per the supplier proposal (description, brand, model, qty, unit cost)</span></label><div id="poItems">' + itemsHtml + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'poItems\').insertAdjacentHTML(\'beforeend\', poItemRow())">+ Add line</button>' +
     '<label>Notes</label><textarea id="f_notes" rows="2">' + (po ? h(po.notes || "") : (pr ? "From request " + h(pr.pr_number || "") : "")) + '</textarea>' +
     '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="poSave(' + (id || "null") + ',' + (fromPr || "null") + ')">' + (id ? "Save changes" : (pr ? "Create PO" : "Save PO")) + '</button></div>', true);
   if (!id) wirePreview("po", "f_company", "f_po_date", "po_num_preview");
   const coEl = $("#f_company");
   if (coEl && multiCompany()) coEl.addEventListener("change", () => { const cur = val("f_supplier"); const el = $("#f_supplier"); if (el) el.innerHTML = opts(suppliersFor(val("f_company")), cur, "Select supplier…"); });
+}
+function copyRequestedItems() {
+  const c = document.getElementById("poItems"); if (!c) return;
+  $$("#poItems .itemrow").forEach(r => { const d = $(".pi-desc", r); if (d && !d.value.trim()) r.remove(); });
+  (window._prRefItems || []).forEach(it => c.insertAdjacentHTML("beforeend", poItemRow(it)));
 }
 async function poSave(id, fromPr) {
   const company_id = val("f_company");
@@ -1033,7 +1045,7 @@ async function poSave(id, fromPr) {
   try {
     if (id) {
       const { error: eu } = await sb.from("fam_purchase_orders").update({
-        company_id, po_date: val("f_po_date") || today(), supplier_id: val("f_supplier") || null, notes: val("f_notes") || null
+        company_id, po_date: val("f_po_date") || today(), supplier_id: val("f_supplier") || null, supplier_ref: val("f_supplier_ref") || null, notes: val("f_notes") || null
       }).eq("id", id);
       if (eu) throw eu;
       const { error: ed } = await sb.from("fam_po_items").delete().eq("po_id", id);
@@ -1044,7 +1056,7 @@ async function poSave(id, fromPr) {
     } else {
       const { data: po, error } = await sb.from("fam_purchase_orders").insert(stamp({
         company_id, pr_id: fromPr || null, po_date: val("f_po_date") || today(),
-        supplier_id: val("f_supplier") || null, status: val("f_status"), notes: val("f_notes") || null
+        supplier_id: val("f_supplier") || null, supplier_ref: val("f_supplier_ref") || null, status: val("f_status"), notes: val("f_notes") || null
       })).select().single();
       if (error) throw error;
       const { error: e2 } = await sb.from("fam_po_items").insert(items.map(i => ({ ...i, po_id: po.id })));
@@ -1071,13 +1083,14 @@ async function poDetail(id) {
       (po.fam_purchase_requests ? '<div class="k">From request</div><div>' + traceLink('prDetail', po.fam_purchase_requests.id, po.fam_purchase_requests.pr_number) + '</div>' : "") +
       ((assets && assets.length) ? '<div class="k">Assets registered</div><div>' + assets.map(a => traceLink('assetDetail', a.id, a.asset_code)).join(", ") + '</div>' : "") +
       '<div class="k">Supplier</div><div>' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + '</div>' +
+      (po.supplier_ref ? '<div class="k">Supplier quotation ref</div><div>' + h(po.supplier_ref) + '</div>' : "") +
       '<div class="k">Date</div><div>' + dstr(po.po_date) + '</div>' +
       '<div class="k">Created by</div><div>' + h(po.created_by_name || "—") + '</div>' +
       '<div class="k">Status</div><div>' + pill(po.status) + '</div>' +
       (po.approved_by_name ? '<div class="k">Approved by</div><div>' + h(po.approved_by_name) + '</div>' : "") +
       '<div class="k">Total</div><div>' + fmt(total) + '</div>' +
       (po.notes ? '<div class="k">Notes</div><div>' + h(po.notes) + '</div>' : "") + '</div>' +
-      (po.status === "pending" ? '<div class="note" style="margin-top:8px">This PO is awaiting approval before it can be issued and received.</div>' : "") +
+      (po.status === "pending" ? '<div class="note" style="margin-top:8px">Entered by ' + h(po.created_by_name || "Purchasing Staff") + ' — awaiting approval by a <strong>Purchasing Officer / Manager</strong> before it can be issued and received.</div>' : "") +
       '<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Item</th><th>Brand / Model</th><th>Category</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Received</th><th class="num">Registered</th><th></th></tr></thead><tbody>' +
       items.map(i => { const reg = regByItem[i.id] || 0, rem = i.quantity - reg;
         const recv = recByItem[i.id] || 0, remRecv = i.quantity - recv;
@@ -1090,7 +1103,7 @@ async function poDetail(id) {
       '<button class="btn" onclick="printTxn(\'po\',' + po.id + ')">Print Record</button>' +
       (P.prepare() && po.status !== "cancelled" && !(receipts && receipts.length) && !(assets && assets.length) ? '<button class="btn2" onclick="poForm(' + po.id + ')">Edit</button>' : "") +
       (receipts && receipts.length ? '<button class="btn2" onclick="printReceivingReport(' + po.id + ')">Print receiving report</button>' : "") +
-      (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue PO</button>' : "") +
+      (po.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="poApprove(' + po.id + ',\'cancelled\')">Reject</button><button class="btn" onclick="poApprove(' + po.id + ',\'ordered\')">Approve &amp; issue (Purchasing Officer/Manager)</button>' : "") +
       (po.status === "draft" && P.prepare() ? '<button class="btn" onclick="poStatus(' + po.id + ',\'pending\')">Submit for approval</button>' : "") +
       ((po.status === "draft" || po.status === "pending" || po.status === "ordered") && P.approve() ? '<button class="btn2 danger" onclick="poStatus(' + po.id + ',\'cancelled\')">Cancel PO</button>' : "") +
       (canDeleteTxn(po, ["draft","pending"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'po\',' + po.id + ',' + JSON.stringify(po.po_number || "") + ')">Delete</button>' : "") +
