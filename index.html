@@ -225,6 +225,7 @@ function toast(msg, bad) {
   toastTimer = setTimeout(() => t.style.display = "none", bad ? 5000 : 2600);
 }
 function err(e) { console.error(e); toast((e && (e.message || e.details)) || "Something went wrong", true); }
+function codeDupMsg(e, code) { if (e && (e.code === "23505" || /duplicate|unique/i.test((e.message || "") + (e.details || "")))) { const c = new Error('Asset code' + (code ? ' "' + code + '"' : "") + " is already used. Enter a different code."); return c; } return e; }
 
 function openModal(html, wide) { const m = $("#modal"); m.innerHTML = html; m.classList.toggle("wide", !!wide); $("#overlay").classList.add("on"); }
 function closeModal() { $("#overlay").classList.remove("on"); $("#modal").innerHTML = ""; $("#modal").classList.remove("wide"); }
@@ -1175,9 +1176,9 @@ async function registerForm(poId, itemId) {
       '<div><label>Custodian</label><select id="r_cust">' + opts(employeesFor(parent.company_id), "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Cost center</label><input id="r_costcenter" placeholder="e.g. Admin-101"></div>' +
       '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
-      '<label>Per-unit details <span class="note" style="font-weight:400">— serial, actual model &amp; specs per unit (pre-filled from receiving where recorded)</span></label>' +
+      '<label>Per-unit details <span class="note" style="font-weight:400">— asset code, serial, actual model &amp; specs per unit (pre-filled from receiving where recorded)</span></label>' +
       '<div id="r_units"></div>' +
-      '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…). Depreciation is auto-computed straight-line.</div>' +
+      '<div class="note">Leave <strong>Asset code</strong> blank to auto-generate (FA-00001…); type your own for IT assets tracked in a separate system. Depreciation is auto-computed straight-line.</div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
     renderRegUnits();
   } catch (e) { err(e); }
@@ -1185,6 +1186,7 @@ async function registerForm(poId, itemId) {
 function renderRegUnits() {
   const c = $("#r_units"); if (!c) return;
   const n = Math.max(0, Math.min(200, Number(val("r_qty") || 0)));
+  const prevC = $$("#r_units .u-code").map(x => x.value);
   const prevB = $$("#r_units .u-brand").map(x => x.value);
   const prevM = $$("#r_units .u-model").map(x => x.value);
   const prevS = $$("#r_units .u-serial").map(x => x.value);
@@ -1194,12 +1196,14 @@ function renderRegUnits() {
   let html = "";
   for (let i = 0; i < n; i++) {
     const recv = rv[i] || {};
+    const cv = i < prevC.length ? prevC[i] : "";
     const bv = i < prevB.length ? prevB[i] : (recv.brand || ri.brand || "");
     const mv = i < prevM.length ? prevM[i] : (recv.model || ri.model || "");
     const sv = i < prevS.length ? prevS[i] : (recv.serial || "");
     const pv = i < prevP.length ? prevP[i] : (recv.specs || "");
-    html += '<div style="display:grid;grid-template-columns:46px 1fr 1fr 1fr 1.3fr;gap:8px;align-items:center;margin-bottom:6px">' +
+    html += '<div style="display:grid;grid-template-columns:46px 0.9fr 1fr 1fr 1fr 1.3fr;gap:8px;align-items:center;margin-bottom:6px">' +
       '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
+      '<input class="u-code" placeholder="Auto (FA-…)" value="' + h(cv) + '">' +
       '<input class="u-brand" placeholder="Brand" value="' + h(bv) + '">' +
       '<input class="u-model" placeholder="Actual model" value="' + h(mv) + '">' +
       '<input class="u-serial" placeholder="Serial number" value="' + h(sv) + '">' +
@@ -1211,27 +1215,37 @@ async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
   const qty = Number(val("r_qty") || 0);
   if (qty < 1) return toast("Quantity must be at least 1", true);
   const ri = window._regItem || {};
+  const codes = $$("#r_units .u-code").map(x => x.value.trim());
   const brands = $$("#r_units .u-brand").map(x => x.value.trim());
   const models = $$("#r_units .u-model").map(x => x.value.trim());
   const serials = $$("#r_units .u-serial").map(x => x.value.trim());
   const specs = $$("#r_units .u-spec").map(x => x.value.trim());
+  const entered = codes.slice(0, qty).filter(Boolean);
+  const dupInBatch = entered.find((c, i) => entered.indexOf(c) !== i);
+  if (dupInBatch) return toast('Asset code "' + dupInBatch + '" is repeated across units. Each code must be unique.', true);
   const rows = [];
-  for (let i = 0; i < qty; i++) rows.push({
-    name, po_id: poId, po_item_id: itemId, supplier_id: supplierId, company_id: companyId, category_id: catId,
-    brand: brands[i] || ri.brand || null, model: models[i] || ri.model || null,
-    serial_number: serials[i] || null,
-    notes: specs[i] || null,
-    acquisition_date: val("r_date") || today(),
-    depreciation_start: val("r_dep") || val("r_date") || today(),
-    acquisition_cost: Number(val("r_cost") || 0),
-    salvage_value: Number(val("r_salvage") || 0),
-    useful_life_months: Number(val("r_life") || 60),
-    location_id: val("r_loc") || null, department_id: val("r_dept") || null, custodian_id: val("r_cust") || null,
-    cost_center: val("r_costcenter") || null, depreciation_method: val("r_depmethod") || "straight_line",
-  });
+  for (let i = 0; i < qty; i++) {
+    const row = {
+      name, po_id: poId, po_item_id: itemId, supplier_id: supplierId, company_id: companyId, category_id: catId,
+      brand: brands[i] || ri.brand || null, model: models[i] || ri.model || null,
+      serial_number: serials[i] || null,
+      notes: specs[i] || null,
+      acquisition_date: val("r_date") || today(),
+      depreciation_start: val("r_dep") || val("r_date") || today(),
+      acquisition_cost: Number(val("r_cost") || 0),
+      salvage_value: Number(val("r_salvage") || 0),
+      useful_life_months: Number(val("r_life") || 60),
+      location_id: val("r_loc") || null, department_id: val("r_dept") || null, custodian_id: val("r_cust") || null,
+      cost_center: val("r_costcenter") || null, depreciation_method: val("r_depmethod") || "straight_line",
+    };
+    if (codes[i]) row.asset_code = codes[i];   // blank → omit so the FA- default fires for that unit
+    rows.push(row);
+  }
+  // insert homogeneous groups separately so PostgREST never has to default-fill a NOT NULL asset_code
+  const coded = rows.filter(r => r.asset_code), auto = rows.filter(r => !r.asset_code);
   try {
-    const { error } = await sb.from("fam_assets").insert(rows);
-    if (error) throw error;
+    if (coded.length) { const { error } = await sb.from("fam_assets").insert(coded); if (error) throw codeDupMsg(error, entered.join(", ")); }
+    if (auto.length) { const { error } = await sb.from("fam_assets").insert(auto); if (error) throw error; }
     toast(qty + " asset(s) registered"); poDetail(poId); if (S.view === "pos") vPOs();
   } catch (e) { err(e); }
 }
@@ -1523,7 +1537,8 @@ async function assetForm(id) {
   let a = {};
   if (id) { const { data, error } = await sb.from("fam_assets").select("*").eq("id", id).single(); if (error) return err(error); a = data; }
   openModal(mhead(id ? "Edit " + (a.asset_code || "asset") : "Add asset manually") +
-    '<div class="frow"><div><label>Asset name</label><input id="a_name" value="' + h(a.name || "") + '"></div>' +
+    '<div class="frow3"><div><label>Asset code <span class="note" style="font-weight:400">— blank = auto (FA-…)</span></label><input id="a_code" value="' + h(a.asset_code || "") + '" placeholder="Auto (FA-…)"></div>' +
+    '<div><label>Asset name</label><input id="a_name" value="' + h(a.name || "") + '"></div>' +
     '<div><label>Company</label>' + companyField("a_company", a.company_id != null ? a.company_id : defaultCompany()) + '</div></div>' +
     '<div class="frow"><div><label>Category</label><select id="a_cat" onchange="catDefaults()">' + opts(S.refs.categories, a.category_id, "—") + '</select></div>' +
     '<div><label>Status</label><select id="a_status">' + ["active","under_repair","lost"].map(s => '<option value="' + s + '"' + (a.status === s ? " selected" : "") + '>' + s.replace(/_/g," ") + '</option>').join("") + '</select></div></div>' +
@@ -1571,12 +1586,14 @@ async function assetSave(id) {
   };
   if (!row.name) return toast("Asset name is required", true);
   if (!row.company_id) return toast("Company is required", true);
+  const code = (val("a_code") || "").trim();
+  if (code) row.asset_code = code;   // blank → omit so the FA- default fires (or, on edit, code is left unchanged)
   try {
     const q = id ? sb.from("fam_assets").update(row).eq("id", id) : sb.from("fam_assets").insert(row);
     const { error } = await q;
     if (error) throw error;
     closeModal(); toast("Asset saved"); if (S.view === "assets") vAssets(); else go(S.view);
-  } catch (e) { err(e); }
+  } catch (e) { err(codeDupMsg(e, code)); }
 }
 
 /* ================= TRANSFERS ================= */
