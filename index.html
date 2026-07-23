@@ -1448,13 +1448,13 @@ async function vAssets() {
 function renderAssetTable() {
   const f = S.assetFilter, q = (f.q || "").toLowerCase();
   const rows = REG_CACHE.filter(r =>
-    (!q || [r.asset_code, r.name, r.serial_number, r.brand, r.model, r.po_number].some(x => (x || "").toLowerCase().includes(q))) &&
+    (!q || [r.asset_code, r.name, r.serial_number, r.brand, r.model, r.po_number, r.custodian_name, r.assignee_label].some(x => (x || "").toLowerCase().includes(q))) &&
     (!f.status || r.status === f.status) &&
     (!f.co || String(r.company_id) === String(f.co)) &&
     (!f.cat || String(r.category_id) === String(f.cat)));
   $("#assetTableWrap").innerHTML = rows.length ?
-    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Brand / Model</th><th>Serial</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Custodian</th><th>Status</th></tr></thead><tbody>' +
-    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h([r.brand, r.model].filter(Boolean).join(" / ") || "—") + '</td><td>' + h(r.serial_number || "—") + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
+    '<div class="scroll"><table><thead><tr><th>Code</th><th>Asset</th><th>Brand / Model</th><th>Serial</th><th>Company</th><th>Category</th><th>Acquired</th><th class="num">Cost</th><th class="num">Accum. dep.</th><th class="num">NBV</th><th>Custodian</th><th>Assigned to</th><th>Status</th></tr></thead><tbody>' +
+    rows.map(r => '<tr class="click" onclick="assetDetail(' + r.id + ')"><td><strong>' + h(r.asset_code) + '</strong></td><td>' + h(r.name) + '</td><td>' + h([r.brand, r.model].filter(Boolean).join(" / ") || "—") + '</td><td>' + h(r.serial_number || "—") + '</td><td>' + h(r.company_name || "—") + '</td><td>' + h(r.category_name || "—") + '</td><td>' + dstr(r.acquisition_date) + '</td><td class="num">' + fmt(r.acquisition_cost) + '</td><td class="num">' + fmt(r.accumulated_depreciation) + '</td><td class="num">' + fmt(r.net_book_value) + '</td><td>' + h(r.custodian_name || "—") + '</td><td>' + h(r.assignee_label || "—") + '</td><td>' + pill(r.status) + '</td></tr>').join("") +
     '</tbody></table></div><div class="note">' + rows.length + ' asset(s) · Cost ' + fmt(rows.reduce((s, r) => s + +r.acquisition_cost, 0)) + ' · NBV ' + fmt(rows.reduce((s, r) => s + +r.net_book_value, 0)) + '</div>'
     : '<div class="empty">No assets match.</div>';
 }
@@ -1468,12 +1468,14 @@ function printAccountability() {
   const r = window._curAsset; if (!r) return;
   const c = (S.refs.companies || []).find(x => String(x.id) === String(r.company_id));
   const logo = c && c.logo_url ? '<img src="' + c.logo_url + '" alt="">' : "";
-  const rowsD = [["Company", c ? c.name : ""],["Asset code", r.asset_code],["Description", r.name],["Category", r.category_name || ""],["Brand / Model", ([r.brand, r.model].filter(Boolean).join(" / ") || "—")],["Serial number", (r.serial_number || "—")],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center || "—"],["Department", r.department_name || "—"],["Location", r.location_name || "—"],["Custodian", r.custodian_name || "—"]];
+  const accName = r.assignee_label || r.custodian_name || "";
+  const accRole = r.assignee_label ? (r.assignee_kind === "department" ? "Assigned department" : "Assigned employee") : "Custodian (safekeeping)";
+  const rowsD = [["Owner (company)", c ? c.name : ""],["Asset code", r.asset_code],["Description", r.name],["Category", r.category_name || ""],["Brand / Model", ([r.brand, r.model].filter(Boolean).join(" / ") || "—")],["Serial number", (r.serial_number || "—")],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center || "—"],["Department", r.department_name || "—"],["Location", r.location_name || "—"],["Custodian (safekeeping)", r.custodian_name || "—"],["Assigned to", r.assignee_label || "— (in safekeeping)"],["Assignment date", r.assignment_date ? dstr(r.assignment_date) : "—"]];
   printBlock(logo + '<h2 style="margin:8px 0 2px">Asset Accountability Form</h2>' +
     '<table style="font-size:13px;border-collapse:collapse;margin-top:6px">' +
     rowsD.map(x => '<tr><td style="padding:4px 12px;color:#555;width:190px">' + h(x[0]) + '</td><td style="padding:4px 12px;font-weight:600">' + h(x[1]) + '</td></tr>').join("") + '</table>' +
-    '<p style="font-size:12px;margin-top:16px">I acknowledge accountability for the asset described above and undertake to use and safekeep it in accordance with company policy.</p>' +
-    '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Custodian — signature over printed name</div><div class="sigline" style="flex:1">Issued by / Date</div></div>');
+    '<p style="font-size:12px;margin-top:16px">I acknowledge accountability for the asset described above and undertake to use and safekeep it in accordance with company policy. Ownership remains with ' + h(c ? c.name : "the owning company") + '.</p>' +
+    '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">' + h(accName) + '<br>' + h(accRole) + ' — signature over printed name</div><div class="sigline" style="flex:1">Issued by / Date</div></div>');
 }
 function printAssetRecord() {
   const r = window._curAsset; if (!r) return;
@@ -1491,10 +1493,10 @@ function printAssetRecord() {
     grp("Identification", [["Description", r.name],["Category", r.category_name],["Brand", r.brand],["Model", r.model],["Serial number", r.serial_number]]) +
     grp("Acquisition", [["Purchase Order", r.po_number || "— (manual)"],["Supplier", r.supplier_name],["Acquisition date", dstr(r.acquisition_date)],["Acquisition cost", fmt(r.acquisition_cost)],["Cost center", r.cost_center]]) +
     grp("Depreciation", [["Method", (r.depreciation_method || "straight_line").replace(/_/g," ")],["Useful life", r.useful_life_months + " months"],["Depreciation start", dstr(r.depreciation_start || r.acquisition_date)],["Salvage value", fmt(r.salvage_value)],["Monthly depreciation", fmt(r.monthly_depreciation)],["Depreciated", r.months_depreciated + " of " + r.useful_life_months + " months (" + pct + "%)"],["Accumulated depreciation", fmt(r.accumulated_depreciation)],["Accumulated impairment", fmt(r.accumulated_impairment)],["Net book value", fmt(r.net_book_value)]]) +
-    grp("Assignment", [["Location", r.location_name],["Department", r.department_name],["Custodian", r.custodian_name]]) +
+    grp("Ownership & assignment", [["Owner (company)", r.company_name],["Location", r.location_name],["Home department", r.department_name],["Custodian (safekeeping)", r.custodian_name],["Assigned to", r.assignee_label || "— (in safekeeping)"],["Assignment date", r.assignment_date ? dstr(r.assignment_date) : "—"],["Accountable now", (r.assignee_label || r.custodian_name || "—") + (r.assignee_label ? " (deployed)" : (r.custodian_name ? " (safekeeping)" : ""))]]) +
     (r.disposal_date ? grp("Disposal", [["Disposal date", dstr(r.disposal_date)],["Method", r.disposal_method],["Proceeds", fmt(r.disposal_proceeds)]]) : "") +
     (r.notes ? grp("Notes / Specifications", [["", r.notes]]) : "") +
-    '<div style="display:flex;gap:50px;margin-top:48px"><div class="sigline" style="flex:1">Prepared by</div><div class="sigline" style="flex:1">Custodian</div><div class="sigline" style="flex:1">Verified by</div></div>' +
+    '<div style="display:flex;gap:50px;margin-top:48px"><div class="sigline" style="flex:1">Prepared by</div><div class="sigline" style="flex:1">' + h(r.assignee_label || r.custodian_name || "") + '<br>Accountable party</div><div class="sigline" style="flex:1">Verified by</div></div>' +
     '<div style="font-size:10px;color:#888;margin-top:20px">Generated ' + dstr(today()) + ' · ' + h(r.asset_code) + '</div>');
 }
 async function assetDetail(id) {
@@ -1506,7 +1508,7 @@ async function assetDetail(id) {
     openModal(mhead(r.asset_code + " — " + r.name) +
       '<div class="kv">' +
       '<div class="k">Status</div><div>' + pill(r.status) + '</div>' +
-      '<div class="k">Company</div><div>' + h(r.company_name || "—") + '</div>' +
+      '<div class="k">Owner (company)</div><div>' + h(r.company_name || "—") + ' <span class="note">(ownership — unchanged by assignment)</span></div>' +
       '<div class="k">Category</div><div>' + h(r.category_name || "—") + '</div>' +
       '<div class="k">From PO</div><div>' + (r.po_id ? traceLink('poDetail', r.po_id, r.po_number) : h(r.po_number || "— (manual)")) + '</div>' +
       '<div class="k">Supplier</div><div>' + h(r.supplier_name || "—") + '</div>' +
@@ -1520,7 +1522,9 @@ async function assetDetail(id) {
       '<div class="k">Net book value</div><div><strong>' + fmt(r.net_book_value) + '</strong></div>' +
       '<div class="k">Location</div><div>' + h(r.location_name || "—") + '</div>' +
       '<div class="k">Department</div><div>' + h(r.department_name || "—") + '</div>' +
-      '<div class="k">Custodian</div><div>' + h(r.custodian_name || "—") + '</div>' +
+      '<div class="k">Custodian</div><div>' + h(r.custodian_name || "—") + ' <span class="note">(safekeeping)</span></div>' +
+      '<div class="k">Assigned to</div><div>' + (r.assignee_label ? h(r.assignee_label) + ' <span class="note">(' + (r.assignee_kind === "department" ? "department" : "employee") + (r.assignment_date ? " · since " + dstr(r.assignment_date) : "") + ')</span>' : '<span class="note">— in safekeeping (not yet deployed)</span>') + '</div>' +
+      '<div class="k">Accountable now</div><div><strong>' + h(r.assignee_label || r.custodian_name || "—") + '</strong> <span class="note">(' + (r.assignee_label ? "deployed" : (r.custodian_name ? "safekeeping" : "unassigned")) + ')</span></div>' +
       (r.disposal_date ? '<div class="k">Disposed</div><div>' + dstr(r.disposal_date) + ' (' + h(r.disposal_method) + ')</div>' : "") +
       (r.notes ? '<div class="k">Notes</div><div>' + h(r.notes) + '</div>' : "") +
       '</div><div class="mfoot">' +
@@ -1528,8 +1532,86 @@ async function assetDetail(id) {
       '<button class="btn2" onclick="maintLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Maintenance log</button>' +
       '<button class="btn2" onclick="impairLog(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Impairment / review</button>' +
       '<button class="btn2" onclick="docList(' + r.id + ',' + JSON.stringify(r.asset_code + " — " + r.name) + ')">Documents</button>' +
-      (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
+      (r.status !== "disposed" && P.prepare() ? '<button class="btn2" onclick="deployForm(' + r.id + ')">' + (r.assignee_label ? "Reassign / return" : "Deploy / assign") + '</button><button class="btn2" onclick="transferForm(' + r.id + ')">Transfer</button><button class="btn2 danger" onclick="disposeForm(' + r.id + ')">Dispose</button><button class="btn2" onclick="assetForm(' + r.id + ')">Edit</button>' : "") +
       '<button class="btn" onclick="closeModal()">Close</button></div>');
+  } catch (e) { err(e); }
+}
+/* Deploy / assign: move accountability from the safekeeping custodian to an employee OR a company+department (logged in the movement history). */
+function currentAssigneeLabel(a) {
+  if (!a) return "";
+  if (a.assignee_id) return refName(S.refs.employees, a.assignee_id);
+  if (a.assignee_department_id) return refName(S.refs.departments, a.assignee_department_id) + (a.assignee_company_id ? " · " + refName(S.refs.companies, a.assignee_company_id) : "");
+  return "";
+}
+function deployToggle() {
+  const k = val("dp_kind");
+  const ew = $("#dp_empwrap"), dw = $("#dp_deptwrap");
+  if (ew) ew.style.display = (k === "employee") ? "" : "none";
+  if (dw) dw.style.display = (k === "department") ? "" : "none";
+}
+async function deployForm(assetId) {
+  if (!P.prepare()) return toast("You don't have permission to deploy assets", true);
+  try {
+    const { data: a, error } = await sb.from("fam_assets").select("company_id, custodian_id, assignee_id, assignee_kind, assignee_department_id, assignee_company_id, asset_code, name").eq("id", assetId).single();
+    if (error) throw error;
+    window._deployAsset = a;
+    const curLabel = currentAssigneeLabel(a);
+    const accNow = curLabel ? curLabel + " (deployed)" : (a.custodian_id ? refName(S.refs.employees, a.custodian_id) + " (safekeeping custodian)" : "—");
+    const kind = a.assignee_kind || "";
+    openModal(mhead("Deploy / assign — " + (a.asset_code || "asset")) +
+      '<div class="note" style="margin-top:0">Assigning transfers <strong>accountability &amp; possession</strong> to an employee or to a company + department. <strong>Ownership stays with the owning company (' + h(refName(S.refs.companies, a.company_id) || "—") + ')</strong> — it does not change.</div>' +
+      '<div class="kv"><div class="k">Owner (company)</div><div>' + h(refName(S.refs.companies, a.company_id) || "—") + '</div>' +
+      '<div class="k">Custodian</div><div>' + h(refName(S.refs.employees, a.custodian_id) || "—") + '</div>' +
+      '<div class="k">Accountable now</div><div><strong>' + h(accNow) + '</strong></div></div>' +
+      '<label>Assign to</label><select id="dp_kind" onchange="deployToggle()">' +
+        '<option value=""' + (!kind ? " selected" : "") + '>— Return to safekeeping (clear assignee)</option>' +
+        '<option value="employee"' + (kind === "employee" ? " selected" : "") + '>An employee</option>' +
+        '<option value="department"' + (kind === "department" ? " selected" : "") + '>A company + department</option></select>' +
+      '<div id="dp_empwrap" style="display:none;margin-top:8px"><label>Employee</label><select id="dp_emp">' + opts(employeesFor(a.company_id), a.assignee_id, "Select employee…") + '</select></div>' +
+      '<div id="dp_deptwrap" style="display:none;margin-top:8px"><div class="frow"><div><label>Company</label>' + companyField("dp_company", a.assignee_company_id != null ? a.assignee_company_id : a.company_id) + '</div>' +
+        '<div><label>Department</label><select id="dp_dept">' + opts(S.refs.departments, a.assignee_department_id, "Select department…") + '</select></div></div></div>' +
+      '<div class="frow" style="margin-top:8px"><div><label>Assignment date</label><input type="date" id="dp_date" value="' + today() + '"></div>' +
+      '<div><label>Reason / notes</label><input id="dp_reason" placeholder="e.g. deployed to end user, ready for use"></div></div>' +
+      '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="deploySave(' + assetId + ')">Record</button></div>');
+    deployToggle();
+  } catch (e) { err(e); }
+}
+async function deploySave(assetId) {
+  const a = window._deployAsset || {};
+  const kind = val("dp_kind");
+  const when = val("dp_date") || today();
+  let upd, toLabel, changed;
+  if (kind === "employee") {
+    const emp = val("dp_emp"); if (!emp) return toast("Select an employee", true);
+    upd = { assignee_kind: "employee", assignee_id: emp, assignee_department_id: null, assignee_company_id: null, assignment_date: when };
+    toLabel = refName(S.refs.employees, emp);
+    changed = !(a.assignee_kind === "employee" && String(a.assignee_id || "") === String(emp));
+  } else if (kind === "department") {
+    const dept = val("dp_dept"), comp = val("dp_company");
+    if (!comp) return toast("Select a company", true);
+    if (!dept) return toast("Select a department", true);
+    upd = { assignee_kind: "department", assignee_id: null, assignee_department_id: dept, assignee_company_id: comp, assignment_date: when };
+    toLabel = refName(S.refs.departments, dept) + " · " + refName(S.refs.companies, comp);
+    changed = !(a.assignee_kind === "department" && String(a.assignee_department_id || "") === String(dept) && String(a.assignee_company_id || "") === String(comp));
+  } else {
+    upd = { assignee_kind: null, assignee_id: null, assignee_department_id: null, assignee_company_id: null, assignment_date: null };
+    toLabel = null;
+    changed = !!(a.assignee_id || a.assignee_department_id);
+  }
+  if (!changed) return toast("No change — pick a different assignee, or return to safekeeping", true);
+  const fromLabel = currentAssigneeLabel(a) || null;
+  try {
+    const { error: e1 } = await sb.from("fam_transfers").insert({
+      asset_id: assetId, transfer_date: when,
+      reason: val("dp_reason") || (toLabel ? "Deployed — accountability to " + toLabel : "Returned to safekeeping"),
+      from_assignee_id: a.assignee_id || null, to_assignee_id: (kind === "employee" ? val("dp_emp") : null),
+      from_assignee_label: fromLabel, to_assignee_label: toLabel,
+    });
+    if (e1) throw e1;
+    const { error: e2 } = await sb.from("fam_assets").update(upd).eq("id", assetId);
+    if (e2) throw e2;
+    closeModal(); toast(toLabel ? "Asset deployed / assigned" : "Returned to safekeeping");
+    if (S.view === "assets") vAssets(); else go(S.view);
   } catch (e) { err(e); }
 }
 async function assetForm(id) {
@@ -1553,7 +1635,8 @@ async function assetForm(id) {
     '<div><label>Model</label><input id="a_model" value="' + h(a.model || "") + '"></div>' +
     '<div><label>Serial number</label><input id="a_serial" value="' + h(a.serial_number || "") + '"></div></div>' +
     '<div class="frow"><div><label>Supplier</label><select id="a_supplier">' + opts(suppliersFor(a.company_id != null ? a.company_id : defaultCompany()), a.supplier_id, "—") + '</select></div>' +
-    '<div><label>Custodian</label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
+    '<div><label>Custodian <span class="note" style="font-weight:400">— holds for safekeeping</span></label><select id="a_cust">' + opts(employeesFor(a.company_id != null ? a.company_id : defaultCompany()), a.custodian_id, "—") + '</select></div></div>' +
+    (id ? '<div class="note">Assign this asset to an employee or department via the <strong>Deploy / assign</strong> button on the asset\'s detail screen.</div>' : "") +
     '<div class="frow"><div><label>Location</label><select id="a_loc">' + opts(S.refs.locations, a.location_id, "—") + '</select></div>' +
     '<div><label>Department</label><select id="a_dept">' + opts(S.refs.departments, a.department_id, "—") + '</select></div></div>' +
     '<label>Notes</label><textarea id="a_notes" rows="2">' + h(a.notes || "") + '</textarea>' +
@@ -1606,14 +1689,15 @@ async function vTransfers() {
   const an = {}; (assets || []).forEach(a => an[a.id] = a.asset_code + " — " + a.name);
   window._activeAssets = (assets || []).filter(a => a.status === "active" || a.status === "under_repair");
   $("#main").innerHTML =
-    '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement between locations, departments, and custodians</p></div><div class="sp"></div>' +
+    '<div class="bar"><div><h2>Transfers</h2><p class="sub" style="margin:0">Movement between locations, departments, custodians, and assigned employees</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="transferForm()">+ New transfer</button>' : '') + deleteAllBtn('transfers') + '</div>' +
     '<div class="card">' + ((tr && tr.length) ?
-      '<div class="scroll"><table><thead><tr><th>Transfer #</th><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Reason</th></tr></thead><tbody>' +
+      '<div class="scroll"><table><thead><tr><th>Transfer #</th><th>Date</th><th>Asset</th><th>Location</th><th>Department</th><th>Custodian</th><th>Assigned to</th><th>Reason</th></tr></thead><tbody>' +
       tr.map(t => '<tr><td><strong>' + h(t.transfer_number || "—") + '</strong></td><td>' + dstr(t.transfer_date) + '</td><td>' + h(an[t.asset_id] || "#" + t.asset_id) + '</td>' +
         '<td>' + h(refName(S.refs.locations, t.from_location_id)) + ' → ' + h(refName(S.refs.locations, t.to_location_id)) + '</td>' +
         '<td>' + h(refName(S.refs.departments, t.from_department_id)) + ' → ' + h(refName(S.refs.departments, t.to_department_id)) + '</td>' +
         '<td>' + h(refName(S.refs.employees, t.from_custodian_id)) + ' → ' + h(refName(S.refs.employees, t.to_custodian_id)) + '</td>' +
+        '<td>' + ((t.from_assignee_label || t.to_assignee_label || t.from_assignee_id || t.to_assignee_id) ? h(t.from_assignee_label || refName(S.refs.employees, t.from_assignee_id) || "—") + ' → ' + h(t.to_assignee_label || refName(S.refs.employees, t.to_assignee_id) || "—") : '—') + '</td>' +
         '<td>' + h(t.reason || "—") + '</td></tr>').join("") +
       '</tbody></table></div>' : '<div class="empty">No transfers recorded yet.</div>') + '</div>';
 }
@@ -1799,7 +1883,7 @@ function expRegister() {
     {label:"Supplier",get:"supplier_name"},{label:"Brand",get:"brand"},{label:"Model",get:"model"},{label:"Serial",get:"serial_number"},{label:"Acquisition Date",get:"acquisition_date"},{label:"Useful Life (months)",get:"useful_life_months"},
     {label:"Cost",get:"acquisition_cost"},{label:"Salvage",get:"salvage_value"},{label:"Monthly Depreciation",get:"monthly_depreciation"},
     {label:"Accumulated Depreciation",get:"accumulated_depreciation"},{label:"Accumulated Impairment",get:"accumulated_impairment"},{label:"Net Book Value",get:"net_book_value"},
-    {label:"Location",get:"location_name"},{label:"Department",get:"department_name"},{label:"Custodian",get:"custodian_name"},{label:"Status",get:"status"},
+    {label:"Location",get:"location_name"},{label:"Department",get:"department_name"},{label:"Custodian",get:"custodian_name"},{label:"Assigned To",get:"assignee_label"},{label:"Assignment Date",get:"assignment_date"},{label:"Status",get:"status"},
   ], REG_CACHE);
 }
 function expLapsing() {
