@@ -1178,7 +1178,7 @@ async function registerForm(poId, itemId) {
       '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
       '<label>Per-unit details <span class="note" style="font-weight:400">— asset code, serial, actual model &amp; specs per unit (pre-filled from receiving where recorded)</span></label>' +
       '<div id="r_units"></div>' +
-      '<div class="note">Leave <strong>Asset code</strong> blank to auto-generate (FA-00001…); type your own for IT assets tracked in a separate system. Depreciation is auto-computed straight-line.</div>' +
+      '<div class="note">Leave <strong>Asset code</strong> blank to auto-generate (date-based, e.g. MTCFA-20260723-001); type your own for IT assets tracked in a separate system. Depreciation is auto-computed straight-line.</div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
     renderRegUnits();
   } catch (e) { err(e); }
@@ -1203,7 +1203,7 @@ function renderRegUnits() {
     const pv = i < prevP.length ? prevP[i] : (recv.specs || "");
     html += '<div style="display:grid;grid-template-columns:46px 0.9fr 1fr 1fr 1fr 1.3fr;gap:8px;align-items:center;margin-bottom:6px">' +
       '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
-      '<input class="u-code" placeholder="Auto (FA-…)" value="' + h(cv) + '">' +
+      '<input class="u-code" placeholder="Auto (IT? type code)" value="' + h(cv) + '">' +
       '<input class="u-brand" placeholder="Brand" value="' + h(bv) + '">' +
       '<input class="u-model" placeholder="Actual model" value="' + h(mv) + '">' +
       '<input class="u-serial" placeholder="Serial number" value="' + h(sv) + '">' +
@@ -1537,7 +1537,7 @@ async function assetForm(id) {
   let a = {};
   if (id) { const { data, error } = await sb.from("fam_assets").select("*").eq("id", id).single(); if (error) return err(error); a = data; }
   openModal(mhead(id ? "Edit " + (a.asset_code || "asset") : "Add asset manually") +
-    '<div class="frow3"><div><label>Asset code <span class="note" style="font-weight:400">— blank = auto (FA-…)</span></label><input id="a_code" value="' + h(a.asset_code || "") + '" placeholder="Auto (FA-…)"></div>' +
+    '<div class="frow3"><div><label>Asset code <span class="note" style="font-weight:400">— IT asset? type its code · blank = auto</span></label><input id="a_code" value="' + h(a.asset_code || "") + '" placeholder="Auto (e.g. MTCFA-20260723-001)"></div>' +
     '<div><label>Asset name</label><input id="a_name" value="' + h(a.name || "") + '"></div>' +
     '<div><label>Company</label>' + companyField("a_company", a.company_id != null ? a.company_id : defaultCompany()) + '</div></div>' +
     '<div class="frow"><div><label>Category</label><select id="a_cat" onchange="catDefaults()">' + opts(S.refs.categories, a.category_id, "—") + '</select></div>' +
