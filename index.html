@@ -1136,6 +1136,10 @@ async function registerForm(poId, itemId) {
     const cat = (S.refs.categories || []).find(c => c.id === item.category_id);
     const parent = item.fam_purchase_orders || {};
     window._regItem = item;
+    // pull per-unit details captured at receiving so they carry onto the assets
+    const { data: recUnits } = await sb.from("fam_receipts").select("unit_details").eq("po_item_id", itemId);
+    window._recvUnits = [];
+    (recUnits || []).forEach(r => { const arr = Array.isArray(r.unit_details) ? r.unit_details : []; arr.forEach(u => window._recvUnits.push(u)); });
     openModal(mhead("Register assets — " + item.description) +
       ((item.brand || item.model) ? '<div class="note" style="margin-top:0">Brand / Model: <strong>' + h([item.brand, item.model].filter(Boolean).join(" / ")) + '</strong> (carried onto each asset)</div>' : "") +
       '<div class="frow3">' +
@@ -1150,7 +1154,7 @@ async function registerForm(poId, itemId) {
       '<div><label>Custodian</label><select id="r_cust">' + opts(employeesFor(parent.company_id), "", "—") + '</select></div></div>' +
       '<div class="frow"><div><label>Cost center</label><input id="r_costcenter" placeholder="e.g. Admin-101"></div>' +
       '<div><label>Depreciation method</label><select id="r_depmethod">' + depMethodOpts("straight_line") + '</select></div></div>' +
-      '<label>Per-unit details <span class="note" style="font-weight:400">— serial number &amp; specifications for each unit (recommended for IT equipment)</span></label>' +
+      '<label>Per-unit details <span class="note" style="font-weight:400">— serial, actual model &amp; specs per unit (pre-filled from receiving where recorded)</span></label>' +
       '<div id="r_units"></div>' +
       '<div class="note">Each unit becomes one asset with its own auto code (FA-00001…). Depreciation is auto-computed straight-line.</div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="registerSave(' + poId + ',' + itemId + ',' + (item.category_id || "null") + ',' + (parent.supplier_id || "null") + ',' + (parent.company_id || "null") + ',\'' + h(item.description).replace(/'/g, "\\'") + '\')">Register</button></div>', true);
@@ -1161,13 +1165,21 @@ function renderRegUnits() {
   const c = $("#r_units"); if (!c) return;
   const n = Math.max(0, Math.min(200, Number(val("r_qty") || 0)));
   const prevS = $$("#r_units .u-serial").map(x => x.value);
+  const prevM = $$("#r_units .u-model").map(x => x.value);
   const prevP = $$("#r_units .u-spec").map(x => x.value);
+  const rv = window._recvUnits || [];
+  const ri = window._regItem || {};
   let html = "";
   for (let i = 0; i < n; i++) {
-    html += '<div style="display:grid;grid-template-columns:66px 1fr 1fr;gap:8px;align-items:center;margin-bottom:6px">' +
+    const recv = rv[i] || {};
+    const sv = i < prevS.length ? prevS[i] : (recv.serial || "");
+    const mv = i < prevM.length ? prevM[i] : (recv.model || ri.model || "");
+    const pv = i < prevP.length ? prevP[i] : (recv.specs || "");
+    html += '<div style="display:grid;grid-template-columns:52px 1fr 1fr 1.2fr;gap:8px;align-items:center;margin-bottom:6px">' +
       '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
-      '<input class="u-serial" placeholder="Serial number" value="' + h(prevS[i] || "") + '">' +
-      '<input class="u-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(prevP[i] || "") + '"></div>';
+      '<input class="u-serial" placeholder="Serial number" value="' + h(sv) + '">' +
+      '<input class="u-model" placeholder="Actual model" value="' + h(mv) + '">' +
+      '<input class="u-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(pv) + '"></div>';
   }
   c.innerHTML = html || '<div class="empty">Set a quantity above.</div>';
 }
@@ -1176,11 +1188,12 @@ async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
   if (qty < 1) return toast("Quantity must be at least 1", true);
   const ri = window._regItem || {};
   const serials = $$("#r_units .u-serial").map(x => x.value.trim());
+  const models = $$("#r_units .u-model").map(x => x.value.trim());
   const specs = $$("#r_units .u-spec").map(x => x.value.trim());
   const rows = [];
   for (let i = 0; i < qty; i++) rows.push({
     name, po_id: poId, po_item_id: itemId, supplier_id: supplierId, company_id: companyId, category_id: catId,
-    brand: ri.brand || null, model: ri.model || null,
+    brand: ri.brand || null, model: models[i] || ri.model || null,
     serial_number: serials[i] || null,
     notes: specs[i] || null,
     acquisition_date: val("r_date") || today(),
@@ -1206,23 +1219,51 @@ async function receiveForm(poId, itemId) {
     const { data: recs } = await sb.from("fam_receipts").select("received_qty").eq("po_item_id", itemId);
     const already = (recs || []).reduce((s, r) => s + r.received_qty, 0);
     const rem = item.quantity - already;
+    window._recvOrderedModel = item.model || ""; window._recvOrderedBrand = item.brand || "";
     openModal(mhead("Receive — " + item.description) +
-      '<div class="frow3"><div><label>Received qty</label><input type="number" id="rv_qty" min="1" max="' + rem + '" value="' + rem + '"></div>' +
+      ((item.brand || item.model) ? '<div class="note" style="margin-top:0">Ordered brand / model: <strong>' + h([item.brand, item.model].filter(Boolean).join(" / ")) + '</strong></div>' : "") +
+      '<div class="frow3"><div><label>Received qty</label><input type="number" id="rv_qty" min="1" max="' + rem + '" value="' + rem + '" oninput="renderRecvUnits()"></div>' +
       '<div><label>Receipt date</label><input type="date" id="rv_date" value="' + today() + '"></div>' +
       '<div><label>Condition</label><select id="rv_cond">' + ["good","damaged","short","wrong_item"].map(c => '<option value="' + c + '">' + c.replace(/_/g," ") + '</option>').join("") + '</select></div></div>' +
       '<div class="frow"><div><label>Inspected by</label><input id="rv_by" value="' + h(S.me.full_name || "") + '"></div>' +
       '<div><label>Remarks</label><input id="rv_remarks"></div></div>' +
       '<div class="note">Ordered ' + item.quantity + ' · already received ' + already + ' · remaining ' + rem + '.</div>' +
+      '<label>Per-unit detail of the delivery <span class="note" style="font-weight:400">— record the actual serial, model &amp; specs of each unit received (required for IT equipment)</span></label>' +
+      '<div id="rv_units"></div>' +
       '<div class="mfoot"><button class="btn2" onclick="poDetail(' + poId + ')">Back</button><button class="btn" onclick="receiveSave(' + poId + ',' + itemId + ')">Record receipt</button></div>', true);
+    renderRecvUnits();
   } catch (e) { err(e); }
+}
+function renderRecvUnits() {
+  const c = $("#rv_units"); if (!c) return;
+  const n = Math.max(0, Math.min(200, Number(val("rv_qty") || 0)));
+  const prevS = $$("#rv_units .rv-serial").map(x => x.value);
+  const prevM = $$("#rv_units .rv-model").map(x => x.value);
+  const prevP = $$("#rv_units .rv-spec").map(x => x.value);
+  const dm = window._recvOrderedModel || "";
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    html += '<div style="display:grid;grid-template-columns:52px 1fr 1fr 1.2fr;gap:8px;align-items:center;margin-bottom:6px">' +
+      '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
+      '<input class="rv-serial" placeholder="Serial number" value="' + h(prevS[i] || "") + '">' +
+      '<input class="rv-model" placeholder="Actual model" value="' + h(i < prevM.length ? prevM[i] : dm) + '">' +
+      '<input class="rv-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(prevP[i] || "") + '"></div>';
+  }
+  c.innerHTML = html || '<div class="empty">Set a received qty above.</div>';
 }
 async function receiveSave(poId, itemId) {
   const qty = Number(val("rv_qty") || 0);
   if (qty < 1) return toast("Received quantity must be at least 1", true);
+  const serials = $$("#rv_units .rv-serial").map(x => x.value.trim());
+  const models = $$("#rv_units .rv-model").map(x => x.value.trim());
+  const specs = $$("#rv_units .rv-spec").map(x => x.value.trim());
+  const unit_details = [];
+  for (let i = 0; i < qty; i++) unit_details.push({ serial: serials[i] || "", model: models[i] || "", specs: specs[i] || "" });
   try {
     const { error } = await sb.from("fam_receipts").insert({
       po_id: poId, po_item_id: itemId, received_qty: qty, condition: val("rv_cond"),
       inspected_by: val("rv_by") || null, receipt_date: val("rv_date") || today(), remarks: val("rv_remarks") || null,
+      unit_details: unit_details,
     });
     if (error) throw error;
     await recomputePOStatus(poId);
@@ -1253,9 +1294,14 @@ async function printReceivingReport(poId) {
     const logo = co.logo_url ? '<img src="' + co.logo_url + '" alt="">' : "";
     let rows = (receipts || []).map(r => '<tr><td>' + dstr(r.receipt_date) + '</td><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td style="text-align:right">' + r.received_qty + '</td><td>' + h((r.condition||"").replace(/_/g," ")) + '</td><td>' + h(r.inspected_by || "") + '</td><td>' + h(r.remarks || "") + '</td></tr>').join("");
     if (!rows) rows = '<tr><td colspan="6">No receipts recorded.</td></tr>';
+    const unitRows = [];
+    (receipts || []).forEach(r => { const arr = Array.isArray(r.unit_details) ? r.unit_details : []; arr.forEach(u => { if (u.serial || u.model || u.specs) unitRows.push('<tr><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td>' + h(u.serial || "—") + '</td><td>' + h(u.model || "—") + '</td><td>' + h(u.specs || "—") + '</td></tr>'); }); });
+    const unitTable = unitRows.length ? '<h3 style="margin:16px 0 4px;font-size:13px">Received units — serial &amp; specifications</h3>' +
+      '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12px;width:100%"><thead><tr><th align="left">Item</th><th align="left">Serial number</th><th align="left">Model</th><th align="left">Specs</th></tr></thead><tbody>' + unitRows.join("") + '</tbody></table>' : "";
     printBlock(logo + '<h2 style="margin:8px 0 2px">Receiving Report</h2>' +
       '<div style="font-size:13px;margin-bottom:8px">' + h(co.name || "") + ' &nbsp;·&nbsp; PO ' + h(po.po_number || "") + ' &nbsp;·&nbsp; Supplier: ' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + ' &nbsp;·&nbsp; ' + dstr(today()) + '</div>' +
       '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12.5px"><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Condition</th><th>Inspected by</th><th>Remarks</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      unitTable +
       '<div style="display:flex;gap:60px;margin-top:54px"><div class="sigline" style="flex:1">Received &amp; inspected by</div><div class="sigline" style="flex:1">Approved by</div></div>');
   } catch (e) { err(e); }
 }
