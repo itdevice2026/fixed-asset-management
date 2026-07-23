@@ -355,6 +355,7 @@ function companyField(id, selected) {
 }
 function defaultCompany() {
   const list = S.refs.companies || [];
+  if (S.activeCompany && list.some(c => String(c.id) === String(S.activeCompany))) return S.activeCompany;
   if (S.me && S.me.company_id && list.some(c => String(c.id) === String(S.me.company_id))) return S.me.company_id;
   return list.length === 1 ? list[0].id : "";
 }
@@ -412,7 +413,9 @@ function wirePreview(kind, companyEl, dateEl, elId) {
 
 /* ================= STATE ================= */
 const S = { me: null, refs: {}, view: "dashboard", reportTab: "register", setupTab: "companies",
-  assetFilter: {q:"", status:"", cat:"", co:""}, dashCompany: "" };
+  assetFilter: {q:"", status:"", cat:"", co:""}, dashCompany: "", activeCompany: "" };
+/* company-scope filter for list queries — applies the header's chosen active company */
+function coFilter(q) { return S.activeCompany ? q.eq("company_id", S.activeCompany) : q; }
 
 async function loadRefs() {
   const [su, ca, de, lo, em, cm] = await Promise.all([
@@ -502,9 +505,18 @@ function renderUserBadge() {
   $("#userbadge").innerHTML =
     '<span class="who">' + h(S.me.full_name || S.me.email) + '</span>' +
     '<span class="rolechip">' + h(S.me.role) + '</span>' +
-    (!isAdmin() && S.me.company_name ? '<span>· ' + h(S.me.company_name) + '</span>' : "") +
+    (multiCompany()
+      ? '<select class="mini" title="Working company" style="max-width:150px;width:auto" onchange="setActiveCompany(this.value)"><option value="">All companies</option>' +
+          (S.refs.companies || []).map(c => '<option value="' + c.id + '"' + (String(S.activeCompany) === String(c.id) ? " selected" : "") + '>' + h(c.name) + '</option>').join("") + '</select>'
+      : (!isAdmin() && S.me.company_name ? '<span>· ' + h(S.me.company_name) + '</span>' : "")) +
     ' <button class="mini" onclick="changePwForm()">Password</button>' +
     '<button class="mini" onclick="doLogout()">Sign out</button>';
+}
+function setActiveCompany(v) {
+  S.activeCompany = v || "";
+  S.dashCompany = S.activeCompany; S.assetFilter.co = S.activeCompany;
+  renderUserBadge();
+  if (S.view) go(S.view);
 }
 
 /* ================= NAV ================= */
@@ -605,8 +617,8 @@ function arItemRow(it) {
 }
 function arPill(s) { return '<span class="pill ' + (s === "budget_approved" || s === "dept_approved" ? "approved" : s) + '">' + h(AR_STATUS[s] || s) + '</span>'; }
 async function vAssetRequests() {
-  const { data: ars, error } = await sb.from("fam_asset_requests")
-    .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
+  const { data: ars, error } = await coFilter(sb.from("fam_asset_requests")
+    .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)"))
     .order("request_date", {ascending:false}).order("id", {ascending:false});
   if (error) throw error;
   $("#main").innerHTML =
@@ -719,9 +731,9 @@ async function arConvert(id) {
 
 /* ================= BUDGET APPROVAL (step 2) ================= */
 async function vBudget() {
-  const { data: ars, error } = await sb.from("fam_asset_requests")
+  const { data: ars, error } = await coFilter(sb.from("fam_asset_requests")
     .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
-    .in("status", ["dept_approved","budget_approved","converted","rejected"])
+    .in("status", ["dept_approved","budget_approved","converted","rejected"]))
     .order("budget_approved_at", {ascending:false, nullsFirst:false}).order("id", {ascending:false});
   if (error) throw error;
   const estTot = a => (a.fam_ar_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
@@ -812,8 +824,8 @@ function prItemRow(it) {
     '<button class="x" title="Remove" onclick="document.getElementById(\'pri' + prItemN + '\').remove()">&times;</button></div>';
 }
 async function vRequests() {
-  const { data: prs, error } = await sb.from("fam_purchase_requests")
-    .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)")
+  const { data: prs, error } = await coFilter(sb.from("fam_purchase_requests")
+    .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)"))
     .order("request_date", {ascending:false}).order("id", {ascending:false});
   if (error) throw error;
   $("#main").innerHTML =
@@ -923,12 +935,12 @@ async function prConvert(id) {
 /* ================= PURCHASE ORDERS ================= */
 async function vPOs() {
   const [{ data: pos, error }, { data: approvedPRs }] = await Promise.all([
-    sb.from("fam_purchase_orders")
-      .select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(id, quantity, unit_cost)")
+    coFilter(sb.from("fam_purchase_orders")
+      .select("*, fam_suppliers(name), fam_companies(name), fam_purchase_requests(pr_number), fam_po_items(id, quantity, unit_cost)"))
       .order("po_date", {ascending: false}).order("id", {ascending: false}),
-    sb.from("fam_purchase_requests")
+    coFilter(sb.from("fam_purchase_requests")
       .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)")
-      .eq("status", "approved").order("request_date", {ascending: false}),
+      .eq("status", "approved")).order("request_date", {ascending: false}),
   ]);
   if (error) throw error;
   const ids = pos.map(p => p.id);
@@ -2162,7 +2174,7 @@ async function userRevoke(id) {
 const CL_STATUS = { pending:"Pending", found:"Found", not_found:"Not found", for_review:"For review" };
 function clPill(s) { return '<span class="pill ' + (s === "found" ? "active" : s === "not_found" ? "lost" : s === "for_review" ? "under_repair" : "draft") + '">' + h(CL_STATUS[s] || s) + '</span>'; }
 async function vCounts() {
-  const { data: sess, error } = await sb.from("fam_count_sessions").select("*").order("count_date", {ascending:false}).order("id", {ascending:false});
+  const { data: sess, error } = await coFilter(sb.from("fam_count_sessions").select("*")).order("count_date", {ascending:false}).order("id", {ascending:false});
   if (error) throw error;
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Inventory Count</h2><p class="sub" style="margin:0">Physical count sessions reconciled against the asset register</p></div><div class="sp"></div>' +
