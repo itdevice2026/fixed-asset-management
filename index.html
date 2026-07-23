@@ -694,7 +694,7 @@ async function arDetail(id) {
       items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td class="num">' + i.quantity + '</td><td class="num">' + fmt(i.estimated_unit_cost) + '</td><td class="num">' + fmt(i.quantity*i.estimated_unit_cost) + '</td></tr>').join("") +
       '<tr><td colspan="4" class="right"><strong>Total</strong></td><td class="num"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
       '<div class="mfoot">' +
-      '<button class="btn" onclick="printTxn(\'ar\',' + ar.id + ')">Print Record</button>' +
+      '<button class="btn" onclick="printArRecord(' + ar.id + ')">Print Record</button>' +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
       (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
       (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
@@ -1283,6 +1283,44 @@ async function printTxn(kind, id) {
       (kind === "ar" && t.budget_amount != null ? '<div style="font-size:12px;margin-top:8px"><strong>Approved budget:</strong> ' + fmt(t.budget_amount) + (t.budget_source ? ' · ' + h(t.budget_source) : "") + '</div>' : "") +
       (t.notes ? '<div style="font-size:12px;margin-top:8px"><strong>Notes:</strong> ' + h(t.notes) + '</div>' : "") +
       '<div style="display:flex;gap:60px;margin-top:56px"><div class="sigline" style="flex:1">Prepared by' + (preparedBy ? ': ' + h(preparedBy) : "") + '</div><div class="sigline" style="flex:1">Approved by' + (approvedBy ? ': ' + h(approvedBy) : "") + '</div></div>');
+  } catch (e) { err(e); }
+}
+/* ===== Formal Asset Request Record ===== */
+async function printArRecord(id) {
+  try {
+    const { data: ar, error } = await sb.from("fam_asset_requests")
+      .select("*, fam_companies(name,logo_url), fam_departments(name), fam_ar_items(*)").eq("id", id).single();
+    if (error) throw error;
+    const co = ar.fam_companies || {};
+    const items = ar.fam_ar_items || [];
+    const tot = items.reduce((s,i)=>s + i.quantity * Number(i.estimated_unit_cost || 0), 0);
+    const logo = co.logo_url ? '<img src="' + co.logo_url + '" alt="" style="height:40px">' : "";
+    const statusTxt = (AR_STATUS && AR_STATUS[ar.status]) ? AR_STATUS[ar.status] : (ar.status || "").replace(/_/g," ");
+    const grp = (title, rows) => (rows.filter(r => r[1] != null && r[1] !== "").length ?
+      '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#333;border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px">' + h(title) + '</div>' +
+      '<table style="width:100%;font-size:12.5px;border-collapse:collapse">' +
+      rows.filter(r => r[1] != null && r[1] !== "").map(x => '<tr><td style="padding:3px 12px 3px 0;color:#555;width:180px;vertical-align:top">' + h(x[0]) + '</td><td style="padding:3px 0;font-weight:600">' + h(x[1]) + '</td></tr>').join("") + '</table></div>' : "");
+    const rows = items.map(i => '<tr><td>' + h(i.description) + '</td><td>' + h(refName(S.refs.categories, i.category_id)) + '</td><td style="text-align:right">' + i.quantity + '</td><td style="text-align:right">' + fmt(i.estimated_unit_cost) + '</td><td style="text-align:right">' + fmt(i.quantity * Number(i.estimated_unit_cost || 0)) + '</td></tr>').join("") || '<tr><td colspan="5">No items.</td></tr>';
+    printBlock(
+      '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #000;padding-bottom:8px">' + logo +
+        '<div><div style="font-size:18px;font-weight:800">Asset Request Record</div><div style="font-size:12px">' + h(co.name || "") + '</div></div>' +
+        '<div style="margin-left:auto;text-align:right"><div style="font-size:20px;font-weight:800;font-family:ui-monospace,monospace">' + h(ar.ar_number || "—") + '</div><div style="font-size:11px;color:#555">Status: ' + h(statusTxt) + '</div></div></div>' +
+      grp("Request details", [["Date", dstr(ar.request_date)],["Requested by", ar.requested_by],["Department", ar.fam_departments ? ar.fam_departments.name : ""],["Business need / purpose", ar.purpose]]) +
+      '<div style="margin-top:12px"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#333;border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:4px">Items requested</div>' +
+      '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12.5px;width:100%"><thead><tr><th align="left">Item / asset needed</th><th align="left">Category</th><th>Qty</th><th>Est. unit cost</th><th>Est. total</th></tr></thead><tbody>' + rows +
+      '<tr><td colspan="4" style="text-align:right"><strong>Estimated total</strong></td><td style="text-align:right"><strong>' + fmt(tot) + '</strong></td></tr></tbody></table></div>' +
+      grp("Approvals", [
+        ["Department head approved", ar.dept_approved_at ? (dstr(ar.dept_approved_at.slice(0,10)) + (ar.dept_approved_name ? " · " + ar.dept_approved_name : "")) : ""],
+        ["Budget approval #", ar.budget_number],
+        ["Approved budget", ar.budget_amount != null ? fmt(ar.budget_amount) : ""],
+        ["Budget owner / approver", ar.budget_owner],
+        ["Budget source / account", ar.budget_source],
+        ["Budget approved", ar.budget_approved_at ? dstr(ar.budget_approved_at.slice(0,10)) : ""],
+        ["Budget remarks", ar.budget_remarks],
+      ]) +
+      (ar.notes ? grp("Notes", [["", ar.notes]]) : "") +
+      '<div style="display:flex;gap:50px;margin-top:48px"><div class="sigline" style="flex:1">Requested by' + (ar.requested_by ? ": " + h(ar.requested_by) : "") + '</div><div class="sigline" style="flex:1">Department Head' + (ar.dept_approved_name ? ": " + h(ar.dept_approved_name) : "") + '</div><div class="sigline" style="flex:1">Budget Approver' + (ar.budget_owner ? ": " + h(ar.budget_owner) : "") + '</div></div>' +
+      '<div style="font-size:10px;color:#888;margin-top:20px">Generated ' + dstr(today()) + ' · ' + h(ar.ar_number || "") + '</div>');
   } catch (e) { err(e); }
 }
 </script>
