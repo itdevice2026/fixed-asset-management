@@ -1185,21 +1185,24 @@ async function registerForm(poId, itemId) {
 function renderRegUnits() {
   const c = $("#r_units"); if (!c) return;
   const n = Math.max(0, Math.min(200, Number(val("r_qty") || 0)));
-  const prevS = $$("#r_units .u-serial").map(x => x.value);
+  const prevB = $$("#r_units .u-brand").map(x => x.value);
   const prevM = $$("#r_units .u-model").map(x => x.value);
+  const prevS = $$("#r_units .u-serial").map(x => x.value);
   const prevP = $$("#r_units .u-spec").map(x => x.value);
   const rv = window._recvUnits || [];
   const ri = window._regItem || {};
   let html = "";
   for (let i = 0; i < n; i++) {
     const recv = rv[i] || {};
-    const sv = i < prevS.length ? prevS[i] : (recv.serial || "");
+    const bv = i < prevB.length ? prevB[i] : (recv.brand || ri.brand || "");
     const mv = i < prevM.length ? prevM[i] : (recv.model || ri.model || "");
+    const sv = i < prevS.length ? prevS[i] : (recv.serial || "");
     const pv = i < prevP.length ? prevP[i] : (recv.specs || "");
-    html += '<div style="display:grid;grid-template-columns:52px 1fr 1fr 1.2fr;gap:8px;align-items:center;margin-bottom:6px">' +
+    html += '<div style="display:grid;grid-template-columns:46px 1fr 1fr 1fr 1.3fr;gap:8px;align-items:center;margin-bottom:6px">' +
       '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
-      '<input class="u-serial" placeholder="Serial number" value="' + h(sv) + '">' +
+      '<input class="u-brand" placeholder="Brand" value="' + h(bv) + '">' +
       '<input class="u-model" placeholder="Actual model" value="' + h(mv) + '">' +
+      '<input class="u-serial" placeholder="Serial number" value="' + h(sv) + '">' +
       '<input class="u-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(pv) + '"></div>';
   }
   c.innerHTML = html || '<div class="empty">Set a quantity above.</div>';
@@ -1208,13 +1211,14 @@ async function registerSave(poId, itemId, catId, supplierId, companyId, name) {
   const qty = Number(val("r_qty") || 0);
   if (qty < 1) return toast("Quantity must be at least 1", true);
   const ri = window._regItem || {};
-  const serials = $$("#r_units .u-serial").map(x => x.value.trim());
+  const brands = $$("#r_units .u-brand").map(x => x.value.trim());
   const models = $$("#r_units .u-model").map(x => x.value.trim());
+  const serials = $$("#r_units .u-serial").map(x => x.value.trim());
   const specs = $$("#r_units .u-spec").map(x => x.value.trim());
   const rows = [];
   for (let i = 0; i < qty; i++) rows.push({
     name, po_id: poId, po_item_id: itemId, supplier_id: supplierId, company_id: companyId, category_id: catId,
-    brand: ri.brand || null, model: models[i] || ri.model || null,
+    brand: brands[i] || ri.brand || null, model: models[i] || ri.model || null,
     serial_number: serials[i] || null,
     notes: specs[i] || null,
     acquisition_date: val("r_date") || today(),
@@ -1258,16 +1262,18 @@ async function receiveForm(poId, itemId) {
 function renderRecvUnits() {
   const c = $("#rv_units"); if (!c) return;
   const n = Math.max(0, Math.min(200, Number(val("rv_qty") || 0)));
-  const prevS = $$("#rv_units .rv-serial").map(x => x.value);
+  const prevB = $$("#rv_units .rv-brand").map(x => x.value);
   const prevM = $$("#rv_units .rv-model").map(x => x.value);
+  const prevS = $$("#rv_units .rv-serial").map(x => x.value);
   const prevP = $$("#rv_units .rv-spec").map(x => x.value);
-  const dm = window._recvOrderedModel || "";
+  const db = window._recvOrderedBrand || "", dm = window._recvOrderedModel || "";
   let html = "";
   for (let i = 0; i < n; i++) {
-    html += '<div style="display:grid;grid-template-columns:52px 1fr 1fr 1.2fr;gap:8px;align-items:center;margin-bottom:6px">' +
+    html += '<div style="display:grid;grid-template-columns:46px 1fr 1fr 1fr 1.3fr;gap:8px;align-items:center;margin-bottom:6px">' +
       '<div class="note" style="margin:0">Unit ' + (i + 1) + '</div>' +
-      '<input class="rv-serial" placeholder="Serial number" value="' + h(prevS[i] || "") + '">' +
+      '<input class="rv-brand" placeholder="Brand" value="' + h(i < prevB.length ? prevB[i] : db) + '">' +
       '<input class="rv-model" placeholder="Actual model" value="' + h(i < prevM.length ? prevM[i] : dm) + '">' +
+      '<input class="rv-serial" placeholder="Serial number" value="' + h(prevS[i] || "") + '">' +
       '<input class="rv-spec" placeholder="Specs (e.g. i7 / 16GB / 512GB SSD)" value="' + h(prevP[i] || "") + '"></div>';
   }
   c.innerHTML = html || '<div class="empty">Set a received qty above.</div>';
@@ -1275,11 +1281,12 @@ function renderRecvUnits() {
 async function receiveSave(poId, itemId) {
   const qty = Number(val("rv_qty") || 0);
   if (qty < 1) return toast("Received quantity must be at least 1", true);
-  const serials = $$("#rv_units .rv-serial").map(x => x.value.trim());
+  const brands = $$("#rv_units .rv-brand").map(x => x.value.trim());
   const models = $$("#rv_units .rv-model").map(x => x.value.trim());
+  const serials = $$("#rv_units .rv-serial").map(x => x.value.trim());
   const specs = $$("#rv_units .rv-spec").map(x => x.value.trim());
   const unit_details = [];
-  for (let i = 0; i < qty; i++) unit_details.push({ serial: serials[i] || "", model: models[i] || "", specs: specs[i] || "" });
+  for (let i = 0; i < qty; i++) unit_details.push({ brand: brands[i] || "", model: models[i] || "", serial: serials[i] || "", specs: specs[i] || "" });
   try {
     const { error } = await sb.from("fam_receipts").insert({
       po_id: poId, po_item_id: itemId, received_qty: qty, condition: val("rv_cond"),
@@ -1316,9 +1323,9 @@ async function printReceivingReport(poId) {
     let rows = (receipts || []).map(r => '<tr><td>' + dstr(r.receipt_date) + '</td><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td style="text-align:right">' + r.received_qty + '</td><td>' + h((r.condition||"").replace(/_/g," ")) + '</td><td>' + h(r.inspected_by || "") + '</td><td>' + h(r.remarks || "") + '</td></tr>').join("");
     if (!rows) rows = '<tr><td colspan="6">No receipts recorded.</td></tr>';
     const unitRows = [];
-    (receipts || []).forEach(r => { const arr = Array.isArray(r.unit_details) ? r.unit_details : []; arr.forEach(u => { if (u.serial || u.model || u.specs) unitRows.push('<tr><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td>' + h(u.serial || "—") + '</td><td>' + h(u.model || "—") + '</td><td>' + h(u.specs || "—") + '</td></tr>'); }); });
-    const unitTable = unitRows.length ? '<h3 style="margin:16px 0 4px;font-size:13px">Received units — serial &amp; specifications</h3>' +
-      '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12px;width:100%"><thead><tr><th align="left">Item</th><th align="left">Serial number</th><th align="left">Model</th><th align="left">Specs</th></tr></thead><tbody>' + unitRows.join("") + '</tbody></table>' : "";
+    (receipts || []).forEach(r => { const arr = Array.isArray(r.unit_details) ? r.unit_details : []; arr.forEach(u => { if (u.serial || u.brand || u.model || u.specs) unitRows.push('<tr><td>' + h(itById[r.po_item_id] ? itById[r.po_item_id].description : "—") + '</td><td>' + h(u.brand || "—") + '</td><td>' + h(u.model || "—") + '</td><td>' + h(u.serial || "—") + '</td><td>' + h(u.specs || "—") + '</td></tr>'); }); });
+    const unitTable = unitRows.length ? '<h3 style="margin:16px 0 4px;font-size:13px">Received units — brand, model, serial &amp; specifications</h3>' +
+      '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12px;width:100%"><thead><tr><th align="left">Item</th><th align="left">Brand</th><th align="left">Model</th><th align="left">Serial number</th><th align="left">Specs</th></tr></thead><tbody>' + unitRows.join("") + '</tbody></table>' : "";
     printBlock(logo + '<h2 style="margin:8px 0 2px">Receiving Report</h2>' +
       '<div style="font-size:13px;margin-bottom:8px">' + h(co.name || "") + ' &nbsp;·&nbsp; PO ' + h(po.po_number || "") + ' &nbsp;·&nbsp; Supplier: ' + h(po.fam_suppliers ? po.fam_suppliers.name : "—") + ' &nbsp;·&nbsp; ' + dstr(today()) + '</div>' +
       '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-size:12.5px"><thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Condition</th><th>Inspected by</th><th>Remarks</th></tr></thead><tbody>' + rows + '</tbody></table>' +
