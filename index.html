@@ -697,7 +697,6 @@ async function arDetail(id) {
       '<button class="btn" onclick="printArRecord(' + ar.id + ')">Print Record</button>' +
       (ar.status === "pending" && P.approve() ? '<button class="btn2 danger" onclick="arSetStatus(' + ar.id + ',\'rejected\')">Reject</button><button class="btn" onclick="arSetStatus(' + ar.id + ',\'dept_approved\')">Approve (Dept Head)</button>' : "") +
       (ar.status === "dept_approved" && P.approve() ? '<button class="btn" onclick="budgetDetail(' + ar.id + ')">Go to Budget Approval →</button>' : "") +
-      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
       (canDeleteTxn(ar, ["pending","rejected"]) ? '<button class="btn2 danger" onclick="askDeleteTxn(\'ar\',' + ar.id + ',' + JSON.stringify(ar.ar_number || "") + ')">Delete</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
@@ -786,7 +785,6 @@ async function budgetDetail(id) {
           (ar.budget_remarks ? '<div class="k">Remarks</div><div>' + h(ar.budget_remarks) + '</div>' : "") + '</div>' : "")) +
       '<div class="mfoot">' +
       (canAct ? '<button class="btn2 danger" onclick="budgetReject(' + ar.id + ')">Reject</button><button class="btn" onclick="budgetApprove(' + ar.id + ')">Confirm budget &amp; approve</button>' : "") +
-      (ar.status === "budget_approved" && P.prepare() ? '<button class="btn" onclick="arConvert(' + ar.id + ')">Convert to Purchase Requisition</button>' : "") +
       '<button class="btn2" onclick="closeModal()">Close</button></div>', true);
   } catch (e) { err(e); }
 }
@@ -824,13 +822,26 @@ function prItemRow(it) {
     '<button class="x" title="Remove" onclick="document.getElementById(\'pri' + prItemN + '\').remove()">&times;</button></div>';
 }
 async function vRequests() {
-  const { data: prs, error } = await coFilter(sb.from("fam_purchase_requests")
-    .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)"))
-    .order("request_date", {ascending:false}).order("id", {ascending:false});
+  const [{ data: prs, error }, { data: budgetedARs }] = await Promise.all([
+    coFilter(sb.from("fam_purchase_requests")
+      .select("*, fam_companies(name), fam_departments(name), fam_pr_items(quantity, estimated_unit_cost)"))
+      .order("request_date", {ascending:false}).order("id", {ascending:false}),
+    coFilter(sb.from("fam_asset_requests")
+      .select("*, fam_companies(name), fam_departments(name), fam_ar_items(quantity, estimated_unit_cost)")
+      .eq("status", "budget_approved")).order("request_date", {ascending:false}),
+  ]);
   if (error) throw error;
+  const arEst = a => (a.fam_ar_items || []).reduce((s,i)=>s+i.quantity*i.estimated_unit_cost,0);
+  const callout = (budgetedARs && budgetedARs.length) ?
+    '<div class="card" style="border-color:var(--accent)"><h3 style="margin:0 0 4px">Approved asset requests awaiting PR (' + budgetedARs.length + ')</h3>' +
+    '<p class="sub" style="margin:0 0 10px">Budget-approved requests ready to become Purchase Requisitions.</p>' +
+    '<div class="scroll"><table><thead><tr><th>AR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Est. total</th><th></th></tr></thead><tbody>' +
+    budgetedARs.map(a => '<tr><td><strong>' + h(a.ar_number || "—") + '</strong></td><td>' + dstr(a.request_date) + '</td><td>' + h(a.fam_companies?a.fam_companies.name:"—") + '</td><td>' + h(a.fam_departments?a.fam_departments.name:"—") + '</td><td>' + h(a.requested_by || "—") + '</td><td class="num">' + fmt(arEst(a)) + '</td><td class="right">' + (P.prepare() ? '<button class="btn3" onclick="prForm(' + a.id + ')">Create PR →</button>' : '<button class="btn3" onclick="arDetail(' + a.id + ')">View</button>') + '</td></tr>').join("") +
+    '</tbody></table></div></div>' : "";
   $("#main").innerHTML =
     '<div class="bar"><div><h2>Purchase Requests</h2><p class="sub" style="margin:0">Requests are the basis of purchase orders</p></div><div class="sp"></div>' +
     (P.prepare() ? '<button class="btn" onclick="prForm()">+ New request</button>' : '') + deleteAllBtn('requests') + '</div>' +
+    callout +
     '<div class="card">' + (prs.length ?
       '<div class="scroll"><table><thead><tr><th>PR #</th><th>Date</th><th>Company</th><th>Department</th><th>Requested by</th><th class="num">Items</th><th class="num">Est. total</th><th>Status</th></tr></thead><tbody>' +
       prs.map(p => { const items = p.fam_pr_items || [];
@@ -839,22 +850,31 @@ async function vRequests() {
         return '<tr class="click" onclick="prDetail(' + p.id + ')"><td><strong>' + h(p.pr_number || "—") + '</strong></td><td>' + dstr(p.request_date) + '</td><td>' + h(p.fam_companies?p.fam_companies.name:"—") + '</td><td>' + h(p.fam_departments?p.fam_departments.name:"—") + '</td><td>' + h(p.requested_by || "—") + '</td><td class="num">' + qty + '</td><td class="num">' + fmt(tot) + '</td><td>' + pill(p.status) + '</td></tr>'; }).join("") +
       '</tbody></table></div>' : '<div class="empty">No purchase requests yet.' + (P.prepare() ? ' Click "+ New request" to create one.' : '') + '</div>') + '</div>';
 }
-function prForm() {
+async function prForm(fromAr) {
   prItemN = 0;
-  openModal(mhead("New purchase request") +
-    '<div class="frow"><div><label>Company</label>' + companyField("pr_company", defaultCompany()) + '</div>' +
+  let ar = null, itemsPrefill = [];
+  if (fromAr) {
+    const { data, error } = await sb.from("fam_asset_requests").select("*, fam_ar_items(*)").eq("id", fromAr).single();
+    if (error) return err(error);
+    ar = data; itemsPrefill = (ar.fam_ar_items || []).slice().sort((a,b)=>a.id-b.id);
+  }
+  const coDefault = ar ? ar.company_id : defaultCompany();
+  const itemsHtml = (itemsPrefill.length ? itemsPrefill : [null]).map(it => prItemRow(it || undefined)).join("");
+  openModal(mhead(ar ? "Create Purchase Request from " + (ar.ar_number || "request") : "New purchase request") +
+    (ar ? '<div class="note" style="margin-top:0;color:var(--accent)">From approved asset request <strong>' + h(ar.ar_number || "") + '</strong> — requested items are carried over; adjust if needed before submitting.</div>' : "") +
+    '<div class="frow"><div><label>Company</label>' + companyField("pr_company", coDefault) + '</div>' +
     '<div><label>Request date</label><input type="date" id="pr_date" value="' + today() + '"></div></div>' +
-    '<div id="pr_num_preview" class="note" style="margin-top:0"></div>' +
-    '<div class="frow"><div><label>Requested by</label><input id="pr_by" value="' + h(S.me.full_name || "") + '"></div>' +
-    '<div><label>Department</label><select id="pr_dept">' + opts(S.refs.departments, "", "—") + '</select></div></div>' +
-    '<label>Purpose / justification</label><input id="pr_purpose" placeholder="e.g. replacement laptops for Finance">' +
-    '<label>Requested items</label><div id="prItems">' + prItemRow() + '</div>' +
+    (ar ? '' : '<div id="pr_num_preview" class="note" style="margin-top:0"></div>') +
+    '<div class="frow"><div><label>Requested by</label><input id="pr_by" value="' + h(ar ? (ar.requested_by || "") : (S.me.full_name || "")) + '"></div>' +
+    '<div><label>Department</label><select id="pr_dept">' + opts(S.refs.departments, ar ? ar.department_id : "", "—") + '</select></div></div>' +
+    '<label>Purpose / justification</label><input id="pr_purpose" value="' + h(ar ? (ar.purpose || "") : "") + '" placeholder="e.g. replacement laptops for Finance">' +
+    '<label>Requested items</label><div id="prItems">' + itemsHtml + '</div>' +
     '<button class="mini" onclick="document.getElementById(\'prItems\').insertAdjacentHTML(\'beforeend\', prItemRow())">+ Add line</button>' +
-    '<label>Notes</label><textarea id="pr_notes" rows="2"></textarea>' +
-    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave()">Submit request</button></div>', true);
-  wirePreview("pr", "pr_company", "pr_date", "pr_num_preview");
+    '<label>Notes</label><textarea id="pr_notes" rows="2">' + (ar ? "From asset request " + h(ar.ar_number || "") : "") + '</textarea>' +
+    '<div class="mfoot"><button class="btn2" onclick="closeModal()">Cancel</button><button class="btn" onclick="prSave(' + (fromAr || "null") + ')">' + (ar ? "Create request" : "Submit request") + '</button></div>', true);
+  if (!ar) wirePreview("pr", "pr_company", "pr_date", "pr_num_preview");
 }
-async function prSave() {
+async function prSave(fromAr) {
   const company_id = val("pr_company");
   if (!company_id) return toast("Select a company", true);
   const items = $$("#prItems .itemrow").map(r => ({
@@ -866,13 +886,14 @@ async function prSave() {
   if (!items.length) return toast("Add at least one item", true);
   try {
     const { data: pr, error } = await sb.from("fam_purchase_requests").insert(stamp({
-      company_id, request_date: val("pr_date") || today(), requested_by: val("pr_by") || null,
+      company_id, ar_id: fromAr || null, request_date: val("pr_date") || today(), requested_by: val("pr_by") || null,
       department_id: val("pr_dept") || null, purpose: val("pr_purpose") || null, notes: val("pr_notes") || null, status: "pending",
     })).select().single();
     if (error) throw error;
     const { error: e2 } = await sb.from("fam_pr_items").insert(items.map(i => ({ ...i, pr_id: pr.id })));
     if (e2) throw e2;
-    closeModal(); toast("Request " + (pr.pr_number || "") + " submitted"); vRequests();
+    if (fromAr) { const { error: e3 } = await sb.from("fam_asset_requests").update({ status: "converted" }).eq("id", fromAr); if (e3) throw e3; }
+    closeModal(); toast("Request " + (pr.pr_number || "") + " submitted"); if (fromAr) go("requests"); else vRequests();
   } catch (e) { err(e); }
 }
 async function prDetail(id) {
